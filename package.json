@@ -1,0 +1,24 @@
+{
+  "name": "focus-todo-mcp",
+  "version": "1.0.0",
+  "description": "MCP server that exposes Focus To-Do tasks, projects and Pomodoro stats to Claude",
+  "type": "module",
+  "main": "index.mjs",
+  "bin": {
+    "focus-todo-mcp": "index.mjs"
+  },
+  "keywords": ["mcp", "focus-to-do", "pomodoro", "productivity", "claude"],
+  "author": "b0r1sOm4g0",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node index.mjs",
+    "test": "node scripts/test.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "snappy": "^7.3.3"
+  }
+}

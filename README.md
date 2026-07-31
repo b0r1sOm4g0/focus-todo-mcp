@@ -1,14 +1,17 @@
 # focus-todo-mcp
 
-MCP server that reads your [Focus To-Do](https://www.focustodo.cn/) data directly from the local Windows app database — no account, no API key, no export needed.
+MCP server that reads your [Focus To-Do](https://www.focustodo.cn/) data directly from your local database (Windows app or Chrome Extension on Linux/Pop!_OS/macOS) — no account login, no API key, no export needed.
 
 ## What it does
 
-Exposes your Focus To-Do tasks, projects, subtasks and Pomodoro sessions to Claude (or any MCP-compatible client) by parsing the app's IndexedDB (Chrome LevelDB format) stored locally on Windows.
+Exposes your Focus To-Do tasks, projects, subtasks and Pomodoro sessions to Claude (or any MCP-compatible client) by parsing the app's IndexedDB (Chrome LevelDB format) stored locally.
 
 ## Requirements
 
-- Windows with [Focus To-Do](https://apps.microsoft.com/detail/9nksqgp7f2nh) installed from the Microsoft Store
+- **Linux (Pop!_OS, Debian, Ubuntu, etc.)**, **macOS**, or **Windows**
+- **Focus To-Do** installed via:
+  - Chrome Extension (`ngceodoilcgpmkijopinlkmohnfifjfb`) in Chrome, Chromium, Brave, Edge, Vivaldi (standard, Flatpak, or Snap)
+  - Microsoft Store App (Windows UWP)
 - Node.js 18+
 
 ## Installation
@@ -27,12 +30,17 @@ claude mcp add --scope user focus-todo node "/path/to/focus-todo-mcp/index.mjs"
 
 Then restart Claude Code.
 
-## Custom path
+## Auto-detection & Custom Path
 
-By default the server auto-detects the Focus To-Do package in `%LOCALAPPDATA%\Packages`. If needed, override with:
+The server automatically detects your Focus To-Do database across:
+- **Linux (Pop!_OS / Debian / Ubuntu)**: `~/.config/google-chrome/<Profile>/IndexedDB/chrome-extension_ngceodoilcgpmkijopinlkmohnfifjfb_0.indexeddb.leveldb` (as well as Chromium, Brave, Edge, Vivaldi, Flatpak, and Snap profiles)
+- **Windows**: Microsoft Store App (%LOCALAPPDATA%\Packages) or Chrome Extension profiles
+- **macOS**: `~/Library/Application Support/Google/Chrome/<Profile>/IndexedDB/...`
+
+If you use a non-standard browser profile path, override auto-detection with:
 
 ```bash
-FOCUS_TODO_IDB_PATH="C:\path\to\IndexedDB\file__0.indexeddb.leveldb" node index.mjs
+FOCUS_TODO_IDB_PATH="/path/to/IndexedDB/chrome-extension_ngceodoilcgpmkijopinlkmohnfifjfb_0.indexeddb.leveldb" node index.mjs
 ```
 
 ## Tools
@@ -48,12 +56,13 @@ FOCUS_TODO_IDB_PATH="C:\path\to\IndexedDB\file__0.indexeddb.leveldb" node index.
 
 ## How it works
 
-Focus To-Do on Windows is built with a Chromium WebView and stores all data in IndexedDB (Chrome's LevelDB format). This server:
+Focus To-Do (both the Windows app and the Chrome extension) stores data in IndexedDB (Chrome's LevelDB format). This server:
 
-1. Reads the LevelDB SSTable (`.ldb`) files and Write-Ahead Log (`.log`) directly
-2. Parses the Chrome IndexedDB key prefix encoding to identify object stores
-3. Decodes values using Node.js's `v8.deserialize` after skipping the Blink serialization header
-4. Caches data in memory for 30 seconds to avoid re-reading on every tool call
+1. Auto-detects the active LevelDB path for Windows UWP or Chrome Extension profiles
+2. Reads the LevelDB SSTable (`.ldb`) files and Write-Ahead Log (`.log`) directly in read-only mode
+3. Parses Chrome IndexedDB key prefixes to extract object store records
+4. Decodes values using Node.js's `v8.deserialize` with automatic V8 header patch for modern Chrome versions
+5. Caches data in memory for 30 seconds to avoid re-reading on every tool call
 
 **Object stores read:**
 - `os1` → Projects
@@ -63,10 +72,10 @@ Focus To-Do on Windows is built with a Chromium WebView and stores all data in I
 
 ## Notes
 
-- The app must be installed from the Microsoft Store (UWP). Other install methods may use a different storage path.
-- The server opens files in read-only mode and never modifies the database.
-- Data is read from disk, so it reflects the last time the app flushed to disk (usually within seconds).
+- The server opens database files in read-only mode and never modifies your data.
+- Data is read directly from disk, reflecting the last state flushed by Chrome/Focus To-Do.
 
 ## License
 
 MIT
+

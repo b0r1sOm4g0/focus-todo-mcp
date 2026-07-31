@@ -1,36 +1,90 @@
-// LevelDB reader for Focus To-Do IndexedDB data
 import { readFileSync, readdirSync, existsSync } from "fs";
 import { join } from "path";
+import { homedir } from "os";
 import { createRequire } from "module";
 import v8 from "v8";
 
 const require = createRequire(import.meta.url);
 const snappy = require("snappy");
 
-// Auto-detect the Focus To-Do UWP package path.
+const FOCUS_TODO_EXTENSION_ID = "ngceodoilcgpmkijopinlkmohnfifjfb";
+
+// Auto-detect the Focus To-Do database path (Windows UWP app or Chrome extension on Linux/macOS/Windows).
 // Override with FOCUS_TODO_IDB_PATH env var for non-standard installations.
 export function findIDBPath() {
-  if (process.env.FOCUS_TODO_IDB_PATH) return process.env.FOCUS_TODO_IDB_PATH;
-
-  const localAppData = process.env.LOCALAPPDATA;
-  if (!localAppData) throw new Error("LOCALAPPDATA environment variable not found. Are you on Windows?");
-
-  const packagesDir = join(localAppData, "Packages");
-  let match;
-  try {
-    match = readdirSync(packagesDir).find(d => d.startsWith("52299SuperElement."));
-  } catch {
-    throw new Error(`Could not read ${packagesDir}`);
+  if (process.env.FOCUS_TODO_IDB_PATH) {
+    if (!existsSync(process.env.FOCUS_TODO_IDB_PATH)) {
+      throw new Error(`Configured FOCUS_TODO_IDB_PATH does not exist: ${process.env.FOCUS_TODO_IDB_PATH}`);
+    }
+    return process.env.FOCUS_TODO_IDB_PATH;
   }
 
-  if (!match) throw new Error("Focus To-Do package not found in %LOCALAPPDATA%\\Packages. Is the app installed from the Microsoft Store?");
+  const home = homedir();
 
-  const idbPath = join(packagesDir, match, "LocalState", "EBWebView", "Default", "IndexedDB", "file__0.indexeddb.leveldb");
-  if (!existsSync(idbPath)) throw new Error(`IndexedDB path not found: ${idbPath}`);
-  return idbPath;
+  // 1. Check Windows UWP App (Microsoft Store)
+  if (process.env.LOCALAPPDATA) {
+    const packagesDir = join(process.env.LOCALAPPDATA, "Packages");
+    try {
+      const match = readdirSync(packagesDir).find(d => d.startsWith("52299SuperElement."));
+      if (match) {
+        const uwpPath = join(packagesDir, match, "LocalState", "EBWebView", "Default", "IndexedDB", "file__0.indexeddb.leveldb");
+        if (existsSync(uwpPath)) return uwpPath;
+      }
+    } catch {}
+  }
+
+  // 2. Check Chrome Extension and Web App IndexedDB paths across browser profiles (Linux, macOS, Windows)
+  const browserConfigs = [
+    // Linux ~/.config
+    join(home, ".config", "google-chrome"),
+    join(home, ".config", "chromium"),
+    join(home, ".config", "BraveSoftware", "Brave-Browser"),
+    join(home, ".config", "microsoft-edge"),
+    join(home, ".config", "vivaldi"),
+    // Linux Flatpak
+    join(home, ".var", "app", "com.google.Chrome", "config", "google-chrome"),
+    join(home, ".var", "app", "org.chromium.Chromium", "config", "chromium"),
+    // Linux Snap
+    join(home, "snap", "google-chrome", "common", ".config", "google-chrome"),
+    join(home, "snap", "chromium", "common", ".config", "chromium"),
+    // macOS
+    join(home, "Library", "Application Support", "Google", "Chrome"),
+    join(home, "Library", "Application Support", "BraveSoftware", "Brave-Browser"),
+    join(home, "Library", "Application Support", "Microsoft Edge"),
+    // Windows Chrome / Browser User Data
+    process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, "Google", "Chrome", "User Data") : null,
+    process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, "BraveSoftware", "Brave-Browser", "User Data") : null,
+    process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, "Microsoft", "Edge", "User Data") : null,
+  ].filter(Boolean);
+
+  const targetDBs = [
+    `chrome-extension_${FOCUS_TODO_EXTENSION_ID}_0.indexeddb.leveldb`,
+    `https_www.focustodo.cn_0.indexeddb.leveldb`,
+    `https_app.focustodo.cn_0.indexeddb.leveldb`,
+  ];
+
+  for (const bDir of browserConfigs) {
+    if (!existsSync(bDir)) continue;
+    let profiles = [];
+    try {
+      profiles = readdirSync(bDir).filter(p => p === "Default" || p.startsWith("Profile "));
+    } catch {
+      continue;
+    }
+    for (const prof of profiles) {
+      for (const targetDB of targetDBs) {
+        const idbPath = join(bDir, prof, "IndexedDB", targetDB);
+        if (existsSync(idbPath)) return idbPath;
+      }
+    }
+  }
+
+  throw new Error(
+    "Focus To-Do database path not found.\n" +
+    "Ensure Focus To-Do (Windows app or Chrome Extension) is installed and has been opened at least once.\n" +
+    "You can also set the FOCUS_TODO_IDB_PATH environment variable to specify the directory path manually."
+  );
 }
-
-export const IDB_PATH = findIDBPath();
 
 // Object store IDs
 export const STORE = { PROJECTS: 1, TASKS: 2, SUBTASKS: 3, POMODOROS: 4, GROUPS: 6, GROUP_USERS: 7 };
@@ -173,13 +227,26 @@ function decodeKeyPrefix(key) {
 
 // ── Value decoding ────────────────────────────────────────────────────────────
 
+const nodeV8Ver = v8.serialize({})[1];
+
 function decodeValue(val) {
   if (!val || val.length < 4) return null;
   // Find the last 0xff in the first 25 bytes (V8 magic), then deserialize
   for (let i = Math.min(val.length - 2, 24); i >= 0; i--) {
     if (val[i] === 0xff) {
-      try { return v8.deserialize(val.subarray(i + 1)); } catch {}
-      try { return v8.deserialize(val.subarray(i)); } catch {}
+      let buf = val.subarray(i + 1);
+      if (buf.length >= 1 && buf[0] > nodeV8Ver) {
+        buf = Buffer.from(buf);
+        buf[0] = nodeV8Ver;
+      }
+      try { return v8.deserialize(buf); } catch {}
+
+      buf = val.subarray(i);
+      if (buf.length >= 2 && buf[1] > nodeV8Ver) {
+        buf = Buffer.from(buf);
+        buf[1] = nodeV8Ver;
+      }
+      try { return v8.deserialize(buf); } catch {}
     }
   }
   return null;
@@ -187,7 +254,7 @@ function decodeValue(val) {
 
 // ── Main loader ───────────────────────────────────────────────────────────────
 
-export function loadAllData() {
+export function loadAllData(idbPath = findIDBPath()) {
   const stores = new Map(); // osId -> Map<id, record>
   for (const id of Object.values(STORE)) stores.set(id, new Map());
 
@@ -202,18 +269,18 @@ export function loadAllData() {
   }
 
   // 1. SST files (historical)
-  const ldbFiles = readdirSync(IDB_PATH).filter(f => f.endsWith(".ldb")).sort();
+  const ldbFiles = readdirSync(idbPath).filter(f => f.endsWith(".ldb")).sort();
   for (const f of ldbFiles) {
     try {
-      for (const e of parseSSTFile(join(IDB_PATH, f))) processEntry(e);
+      for (const e of parseSSTFile(join(idbPath, f))) processEntry(e);
     } catch {}
   }
 
   // 2. WAL (recent mutations — override SST data)
-  const logFiles = readdirSync(IDB_PATH).filter(f => f.endsWith(".log")).sort();
+  const logFiles = readdirSync(idbPath).filter(f => f.endsWith(".log")).sort();
   for (const f of logFiles) {
     try {
-      for (const e of parseWAL(join(IDB_PATH, f))) processEntry(e);
+      for (const e of parseWAL(join(idbPath, f))) processEntry(e);
     } catch {}
   }
 

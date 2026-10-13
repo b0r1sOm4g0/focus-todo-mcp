@@ -114,8 +114,10 @@ Cliente CDP mínimo (`Runtime.evaluate`, `Runtime.getProperties`, `Runtime.callF
   todas as tarefas afetadas (inclusive as recém-criadas) terem `sync === 1`, ou até o timeout.
 - Atualização da UI: chamar o serviço direto altera o banco mas não o estado React da janela.
   Depois do `syncAndWait`, a página é recarregada **somente se não houver pomodoro em andamento**
-  (recarregar interromperia o timer). Se o estado do timer não puder ser determinado, não
-  recarrega e o retorno da tool avisa que a janela mostra os dados novos no próximo refresh.
+  (recarregar interromperia o timer). O estado vem do store Redux do app
+  (`store.getState().timerInfo.state`, valores `initial | work | pause | rest | waitingForRest`);
+  recarrega só com `initial`. Se o estado não puder ser determinado, não recarrega e o retorno da
+  tool avisa que a janela mostra os dados novos no próximo refresh.
 
 ### `writer.mjs` (novo)
 Interface usada pelo `index.mjs`, fácil de substituir por um falso nos testes:
@@ -140,8 +142,9 @@ Todas recebem `title` e `annotations`.
 ### Leitura (`readOnlyHint: true`)
 - As 6 existentes, sem mudança de nome.
 - `list_tasks` e `search_tasks`: `status` ganha `"overdue"`; `"active"` usa `isActive`.
-- `taskSummary` ganha `recurring: boolean` e `seriesId` (`rId`), e as datas passam a sair em
-  horário local com offset (ex.: `2026-10-13T23:59:59-03:00`).
+- `taskSummary` ganha `recurring: boolean` e `seriesId` (`rId`). As datas continuam como estão
+  (`YYYY-MM-DD` no fuso local, via `ts()`); a confusão de "23:59 virando amanhã" vinha dos scripts
+  do spike, não das tools.
 - **`find_duplicate_tasks`** (nova): parâmetros `include_non_recurring?: boolean` (padrão
   `false`). Retorna os grupos com `keep` e `remove` (resumos das tarefas) e o total de tarefas
   sobrando.

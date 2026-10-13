@@ -26,21 +26,15 @@ test("unchecked box, decline and cancel all mean declined", async () => {
   }
 });
 
-test("confirmed flag cannot bypass the form when elicitation is available", async () => {
-  const s = fakeServer({ caps: { elicitation: {} }, reply: { action: "decline" } });
-  assert.equal(await createConfirm(s)({ message: "m", confirmed: true }), "declined");
-});
-
-test("without elicitation: preview first, accepted with confirmed", async () => {
+test("without elicitation the form is unavailable", async () => {
   const s = fakeServer({ caps: {} });
-  assert.equal(await createConfirm(s)({ message: "m" }), "preview");
-  assert.equal(await createConfirm(s)({ message: "m", confirmed: true }), "accepted");
+  assert.equal(await createConfirm(s)({ message: "m" }), "unavailable");
   assert.equal(s.calls.length, 0);
 });
 
-test("falls back to preview when the client rejects form elicitation", async () => {
+test("unavailable when the client rejects form elicitation", async () => {
   const s = fakeServer({ caps: { elicitation: {} }, error: new Error("Client does not support form elicitation.") });
-  assert.equal(await createConfirm(s)({ message: "m" }), "preview");
+  assert.equal(await createConfirm(s)({ message: "m" }), "unavailable");
 });
 
 test("other elicitation errors propagate", async () => {

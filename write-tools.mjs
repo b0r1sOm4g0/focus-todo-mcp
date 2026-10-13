@@ -1,6 +1,7 @@
 // Write tools: definitions, validation against current data, confirmation and result text
 import { isActive, isRecurring, findDuplicateGroups } from "./filters.mjs";
 import { ts, projectName } from "./format.mjs";
+import { randomUUID } from "crypto";
 
 export const MAX_TASK_IDS = 50;
 
@@ -14,9 +15,9 @@ const inputSchema = {
       maxItems: MAX_TASK_IDS,
       description: "Focus To-Do task IDs (from list_tasks, search_tasks or find_duplicate_tasks)",
     },
-    confirmed: {
-      type: "boolean",
-      description: "Confirms a preview the user approved. Ignored when the client supports confirmation forms.",
+    confirmation_token: {
+      type: "string",
+      description: "Single-use token from a preview the user approved, valid only for the same tool and task IDs. Used only when the client has no confirmation forms.",
     },
   },
   required: ["task_ids"],
@@ -106,6 +107,9 @@ function formatResults({ doneLabel, results, pendingSync, uiRefreshed, notes }) 
 }
 
 export function createWriteHandlers({ getData, invalidate, writer, confirm }) {
+  // Previews issued to clients without confirmation forms: token -> tool + exact IDs
+  const previews = new Map();
+  const previewKey = (tool, ids) => `${tool}|${[...ids].sort().join(",")}`;
   const describe = (t, projects) => `${t.name} · ${projectName(projects, t.projectId)} · ${ts(t.deadline) ?? "no deadline"}`;
 
   async function run({ tool, verb, doneLabel, args, validate, execute }) {
@@ -119,14 +123,22 @@ export function createWriteHandlers({ getData, invalidate, writer, confirm }) {
     if (valid.length === 0) return ["Nothing to do.", ...notes].join("\n");
 
     const lines = valid.map(v => `- ${describe(v.task, projects)}${v.keep ? ` (keeps ${describe(v.keep, projects)})` : ""}`);
-    const decision = await confirm({ message: `${verb} ${valid.length} task(s) in Focus To-Do?\n${lines.join("\n")}`, confirmed: args.confirmed });
-    if (decision === "preview") {
-      return [`Confirmation required; nothing was changed. ${verb} ${valid.length} task(s):`, ...lines, ...notes,
-        `To apply, call ${tool} again with the same task_ids and confirmed: true.`].join("\n");
-    }
+    const validIds = valid.map(v => v.task.id);
+    const decision = await confirm({ message: `${verb} ${valid.length} task(s) in Focus To-Do?\n${lines.join("\n")}` });
     if (decision === "declined") return ["Cancelled; nothing was changed.", ...notes].join("\n");
+    if (decision === "unavailable") {
+      const key = previewKey(tool, validIds);
+      const approved = args.confirmation_token && previews.get(args.confirmation_token) === key;
+      previews.delete(args.confirmation_token);
+      if (!approved) {
+        const token = randomUUID();
+        previews.set(token, key);
+        return [`Confirmation required; nothing was changed. ${verb} ${valid.length} task(s):`, ...lines, ...notes,
+          `To apply after the user approves, call ${tool} again with the same task_ids and confirmation_token: "${token}".`].join("\n");
+      }
+    }
 
-    const outcome = await execute(valid.map(v => v.task.id));
+    const outcome = await execute(validIds);
     invalidate();
     return formatResults({ doneLabel, ...outcome, notes });
   }

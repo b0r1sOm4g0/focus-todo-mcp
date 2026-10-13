@@ -1,5 +1,5 @@
 // Write tools: definitions, validation against current data, confirmation and result text
-import { isActive, isRecurring, findDuplicateGroups } from "./filters.mjs";
+import { isActive, isRecurring, findDuplicateGroups, findSuccessor } from "./filters.mjs";
 import { ts, projectName } from "./format.mjs";
 import { randomUUID } from "crypto";
 
@@ -56,12 +56,16 @@ function normalizeIds(taskIds) {
 
 function validateComplete(ids, tasks) {
   const valid = [], skipped = [], rejected = [];
+  const all = [...tasks.values()];
   for (const id of ids) {
     const t = tasks.get(id);
     if (!t) rejected.push({ id, reason: "task not found" });
     else if (t.isFinished) skipped.push({ id, reason: "already completed" });
     else if (!isActive(t)) rejected.push({ id, reason: "task is not active (deleted or archived)" });
-    else valid.push({ task: t });
+    else {
+      const successor = findSuccessor(t, all);
+      valid.push(successor ? { task: t, successor, warn: `next occurrence already exists: ${ts(successor.deadline)}` } : { task: t });
+    }
   }
   return { valid, skipped, rejected };
 }
@@ -151,7 +155,7 @@ export function createWriteHandlers({ getData, invalidate, writer, confirm }) {
   }
 
   return {
-    complete_tasks: args => run({ tool: "complete_tasks", verb: "Complete", doneLabel: "Completed", args, validate: validateComplete, execute: ids => writer.completeTasks(ids) }),
+    complete_tasks: args => run({ tool: "complete_tasks", verb: "Complete", doneLabel: "Completed", args, validate: validateComplete, execute: (ids, valid) => writer.completeTasks(ids, { successorOf: Object.fromEntries(valid.filter(v => v.successor).map(v => [v.task.id, v.successor.id])) }) }),
     skip_occurrences: args => run({ tool: "skip_occurrences", verb: "Skip the current occurrence of", doneLabel: "Skipped", args, validate: validateSkip, execute: ids => writer.skipOccurrences(ids) }),
     remove_duplicate_tasks: args => run({ tool: "remove_duplicate_tasks", verb: "Delete duplicate", doneLabel: "Removed", args, validate: validateRemoveDuplicates, execute: (ids, valid) => writer.deleteTasks(ids, { keepOf: Object.fromEntries(valid.map(v => [v.task.id, v.keep.id])) }) }),
   };

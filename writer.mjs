@@ -11,13 +11,13 @@ export function createWriter({ openSession }) {
     return next;
   };
 
-  async function run(ids, method, nextOf, guardOf) {
+  async function run(ids, methodOf, nextOf, guardOf) {
     const session = await openSession();
     try {
       const results = [];
       for (const id of ids) {
         try {
-          const next = nextOf(await session.call(method, id, guardOf(id)));
+          const next = nextOf(await session.call(methodOf(id), id, guardOf(id)));
           results.push(next ? { id, ok: true, nextOccurrence: next } : { id, ok: true });
         } catch (err) {
           results.push({ id, ok: false, error: err.message });
@@ -40,8 +40,13 @@ export function createWriter({ openSession }) {
   }
 
   return {
-    completeTasks: ids => serialized(() => run(ids, "completeTask", r => occurrence(r?.newTask), () => ({}))),
-    skipOccurrences: ids => serialized(() => run(ids, "deleteCurrentRepeatTask", r => occurrence(r), () => ({ recurring: true }))),
-    deleteTasks: (ids, { keepOf = {} } = {}) => serialized(() => run(ids, "deleteTask", () => undefined, id => (keepOf[id] ? { keepId: keepOf[id] } : {}))),
+    // successorOf: tasks whose series already has a later active occurrence are finished without
+    // generating another one (the app's completeTask always generates)
+    completeTasks: (ids, { successorOf = {} } = {}) => serialized(() => run(ids,
+      id => (successorOf[id] ? "finishOnly" : "completeTask"),
+      r => occurrence(r?.newTask),
+      id => (successorOf[id] ? { successorId: successorOf[id] } : {}))),
+    skipOccurrences: ids => serialized(() => run(ids, () => "deleteCurrentRepeatTask", r => occurrence(r), () => ({ recurring: true }))),
+    deleteTasks: (ids, { keepOf = {} } = {}) => serialized(() => run(ids, () => "deleteTask", () => undefined, id => (keepOf[id] ? { keepId: keepOf[id] } : {}))),
   };
 }

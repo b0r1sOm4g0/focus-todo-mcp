@@ -116,3 +116,11 @@ test("a failed call does not block the next one", async () => {
   await assert.rejects(w.completeTasks(["a"]), /no browser/);
   assert.equal((await w.completeTasks(["a"])).results[0].ok, true);
 });
+
+test("completeTasks finishes without a new occurrence when the series already has one", async () => {
+  const s = fakeSession({ replies: { late: { id: "late", isFinished: true }, plain: { finishedTask: {}, newTask: { id: "n9", deadline: 1 } } } });
+  const out = await createWriter({ openSession: async () => s }).completeTasks(["late", "plain"], { successorOf: { late: "next" } });
+  const calls = s.log.filter(e => e[0] === "call").map(e => [e[1], e[2], e[3]]);
+  assert.deepEqual(calls, [["finishOnly", "late", { successorId: "next" }], ["completeTask", "plain", {}]]);
+  assert.deepEqual(out.results, [{ id: "late", ok: true }, { id: "plain", ok: true, nextOccurrence: { id: "n9", deadline: 1 } }]);
+});

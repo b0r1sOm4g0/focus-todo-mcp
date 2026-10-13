@@ -7,7 +7,7 @@ import { liveTaskProblem, appliedProblem } from "./guards.mjs";
 const GROUP = "focus-todo-mcp";
 const SERVICES_LOST = "focus-todo-mcp: services not located";
 const SHAPES = {
-  taskService: ["completeTask", "deleteCurrentRepeatTask", "deleteTask", "fetchTaskById"],
+  taskService: ["completeTask", "deleteCurrentRepeatTask", "deleteTask", "fetchTaskById", "updateTaskInfo"],
   synchronizer: ["syncNow", "sync", "updateProgressBar"],
 };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -125,9 +125,13 @@ function callService(cdp, method, id, guard = {}) {
     const method = ${JSON.stringify(method)}, id = ${JSON.stringify(id)}, guard = ${JSON.stringify(guard)};
     const task = await s.fetchTaskById(id);
     const keep = guard.keepId ? await s.fetchTaskById(guard.keepId) : undefined;
-    const before = liveTaskProblem(task, guard, keep);
+    const successor = guard.successorId ? await s.fetchTaskById(guard.successorId) : undefined;
+    const before = liveTaskProblem(task, guard, keep, successor);
     if (before) throw new Error(before);
-    const r = await s[method](id);
+    // finishOnly: the fields the app's completeTask sets, without generating the next occurrence
+    const r = method === "finishOnly"
+      ? await s.updateTaskInfo(id, { isFinished: true, finishedDate: Date.now(), rCycle: 0, rUnit: "", rValue: "", rFirstDeadline: 0 })
+      : await s[method](id);
     const after = appliedProblem(method, await s.fetchTaskById(id));
     if (after) throw new Error(after);
     return r == null ? null : JSON.parse(JSON.stringify(r));

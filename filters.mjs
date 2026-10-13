@@ -25,6 +25,17 @@ function compareKeep(a, b) {
     || (a.creationDate ?? 0) - (b.creationDate ?? 0);
 }
 
+// Earliest later active occurrence of the same recurring series, if the series already has one
+export function findSuccessor(task, tasks) {
+  if (!task.rId) return undefined;
+  let best;
+  for (const t of tasks) {
+    if (t.id === task.id || t.rId !== task.rId || !isActive(t) || !(t.deadline > task.deadline)) continue;
+    if (!best || t.deadline < best.deadline) best = t;
+  }
+  return best;
+}
+
 export function findDuplicateGroups(tasks, { includeNonRecurring = false } = {}) {
   const groups = new Map();
   for (const t of tasks) {

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isActive, isOverdue, isRecurring, findDuplicateGroups } from "../filters.mjs";
+import { isActive, isOverdue, isRecurring, findDuplicateGroups, findSuccessor } from "../filters.mjs";
 
 const NOW = new Date(2026, 9, 13, 10, 0, 0).getTime(); // 13 Oct 2026 10:00 local
 const MIDNIGHT = new Date(2026, 9, 13, 0, 0, 0).getTime();
@@ -65,4 +65,15 @@ test("non-recurring duplicates only when requested", () => {
   const y = task({ name: "Same", deadline: MIDNIGHT + 2 });
   assert.equal(findDuplicateGroups([x, y]).length, 0);
   assert.equal(findDuplicateGroups([x, y], { includeNonRecurring: true }).length, 1);
+});
+
+test("findSuccessor returns the earliest later active occurrence of the same series", () => {
+  const late = task({ rId: "S3", rCycle: 1, deadline: MIDNIGHT - 10 * 86400e3 });
+  const next = task({ rId: "S3", rCycle: 1, deadline: MIDNIGHT + 86400e3 });
+  const after = task({ rId: "S3", rCycle: 1, deadline: MIDNIGHT + 3 * 86400e3 });
+  const done = task({ rId: "S3", rCycle: 1, deadline: MIDNIGHT, isFinished: true });
+  const other = task({ rId: "S4", rCycle: 1, deadline: MIDNIGHT });
+  assert.equal(findSuccessor(late, [late, after, next, done, other])?.id, next.id);
+  assert.equal(findSuccessor(next, [late, next]), undefined);
+  assert.equal(findSuccessor(task({ deadline: MIDNIGHT }), [late, next]), undefined);
 });

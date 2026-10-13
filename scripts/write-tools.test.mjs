@@ -193,3 +193,14 @@ test("a writer warning reaches the result text", async () => {
   const { h } = setup([{ id: "a" }], { result: { results: [{ id: "a", ok: true }], pendingSync: ["a"], uiRefreshed: false, warning: "The changes were applied, but X" } });
   assert.match(await h.complete_tasks({ task_ids: ["a"] }), /The changes were applied, but X/);
 });
+
+test("complete_tasks keeps an existing next occurrence instead of creating another", async () => {
+  const { h, calls } = setup([
+    { id: "late", rCycle: 1, rId: "S1", deadline: TODAY - 10 * 86400e3 },
+    { id: "next", rCycle: 1, rId: "S1", deadline: TODAY + 86400e3 },
+    { id: "lone", rCycle: 1, rId: "S2", deadline: TODAY - 86400e3 },
+  ]);
+  await h.complete_tasks({ task_ids: ["late", "lone"] });
+  assert.deepEqual(calls.options[0], { successorOf: { late: "next" } });
+  assert.match(calls.confirm[0].message, /late .*\[next occurrence already exists: 2026-10-14\]/);
+});

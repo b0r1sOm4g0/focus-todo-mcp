@@ -46,3 +46,14 @@ test("guards are self-contained so they can run inside the page", () => {
   }
   assert.equal(new Function(`return (${liveTaskProblem.toString()})`)()(live(), {}), null);
 });
+
+test("finishing without a new occurrence requires the successor to still be live and later", () => {
+  const t = live({ rId: "S1", rCycle: 1, deadline: DAY - 10 * 86400e3 });
+  assert.equal(liveTaskProblem(t, { successorId: "n" }, undefined, live({ id: "n", rId: "S1", deadline: DAY })), null);
+  assert.match(liveTaskProblem(t, { successorId: "n" }, undefined, undefined), /next occurrence/);
+  assert.match(liveTaskProblem(t, { successorId: "n" }, undefined, live({ id: "n", rId: "S1", state: -1 })), /next occurrence/);
+  assert.match(liveTaskProblem(t, { successorId: "n" }, undefined, live({ id: "n", rId: "S2" })), /next occurrence/);
+  assert.match(liveTaskProblem(t, { successorId: "n" }, undefined, live({ id: "n", rId: "S1", deadline: t.deadline })), /next occurrence/);
+  assert.equal(appliedProblem("finishOnly", live({ isFinished: true })), null);
+  assert.match(appliedProblem("finishOnly", live()), /did not apply/);
+});

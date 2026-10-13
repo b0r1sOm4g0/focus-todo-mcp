@@ -38,7 +38,7 @@ function dailySeries(name, deadline, rId) {
 let failed = false;
 try {
   const setup = await openSession();
-  let plain, rec, dupA, dupB;
+  let plain, rec, dupA, dupB, stale, future;
   try {
     const uuid = () => setup.evaluate("crypto.randomUUID().toUpperCase()");
     plain = await addTask(setup, { name: `${PREFIX} plain`, deadline: YESTERDAY });
@@ -46,6 +46,9 @@ try {
     const series = await uuid();
     dupA = await addTask(setup, dailySeries(`${PREFIX} dup`, TODAY, series));
     dupB = await addTask(setup, dailySeries(`${PREFIX} dup`, TODAY, series));
+    const series2 = await uuid();
+    stale = await addTask(setup, dailySeries(`${PREFIX} stale`, YESTERDAY, series2));
+    future = await addTask(setup, dailySeries(`${PREFIX} stale`, TODAY, series2));
   } finally {
     setup.close();
   }
@@ -57,6 +60,10 @@ try {
   assert.ok(skipped.results[0].nextOccurrence?.id, JSON.stringify(skipped));
   const removed = await writer.deleteTasks([dupB.id], { keepOf: { [dupB.id]: dupA.id } });
   assert.equal(removed.results[0].ok, true, JSON.stringify(removed));
+  // Series that already has its next occurrence: finish without generating another
+  const finished = await writer.completeTasks([stale.id], { successorOf: { [stale.id]: future.id } });
+  assert.equal(finished.results[0].ok, true, JSON.stringify(finished));
+  assert.equal(finished.results[0].nextOccurrence, undefined, "no new occurrence reported");
   // Stale snapshot: the occurrence was already skipped (deleted); the live check must refuse it
   const again = await writer.skipOccurrences([rec.id]);
   assert.equal(again.results[0].ok, false, JSON.stringify(again));
@@ -74,6 +81,9 @@ try {
     assert.equal(byId.get(dupA.id).state, 0, "kept copy untouched");
     const activeInSeries = [...byId.values()].filter(t => t.rId === rec.rId && t.state === 0 && !t.isFinished);
     assert.equal(activeInSeries.length, 1, "refused retry created no extra occurrence");
+    assert.equal(byId.get(stale.id).isFinished, true, "stale occurrence completed");
+    const series2Active = [...byId.values()].filter(t => t.rId === stale.rId && t.state === 0 && !t.isFinished);
+    assert.deepEqual(series2Active.map(t => t.id), [future.id], "existing next occurrence kept, none added");
     console.log("PASS: complete, skip and remove-duplicate work end to end");
   } finally {
     check.close();

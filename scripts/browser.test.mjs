@@ -128,3 +128,20 @@ test("findExtensionTarget returns the extension page on this port", async () => 
     assert.match(t.webSocketDebuggerUrl, /\/devtools\/page\/X$/);
   } finally { server.close(); }
 });
+
+const TCP6_FOREIGN = [
+  "  sl  local_address                         remote_address                        st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode",
+  "   0: 00000000000000000000000000000000:2406 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000  1001        0 99 1",
+].join("\n");
+const TCP_EMPTY = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n";
+
+test("checkPortOwner also inspects IPv6 (dual-stack) listeners", () => {
+  assert.throws(
+    () => checkPortOwner(9222, { read: p => (p.endsWith("tcp6") ? TCP6_FOREIGN : TCP_EMPTY), uid: 1000 }),
+    /held by another user's process \(uid 1001\)/,
+  );
+});
+
+test("checkPortOwner fails closed when no listener owner can be found", () => {
+  assert.throws(() => checkPortOwner(9222, { read: () => TCP_EMPTY, uid: 1000 }), /could not verify/);
+});

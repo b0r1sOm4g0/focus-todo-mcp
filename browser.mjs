@@ -34,16 +34,23 @@ function defaultLaunch() {
   spawn("gtk-launch", ["focus-todo"], { detached: true, stdio: "ignore", shell: false }).unref();
 }
 
-// Linux: refuse a debug port held by another user's process (port squatting)
+// Linux: refuse a debug port held by another user's process (port squatting). Checks IPv4 and
+// IPv6 tables (a dual-stack [::] listener also accepts 127.0.0.1) and fails closed if no owner is found
 export function checkPortOwner(port, { read = path => readFileSync(path, "utf8"), uid = process.getuid?.() } = {}) {
   if (uid === undefined) return;
-  let table;
-  try { table = read("/proc/net/tcp"); } catch { return; } // not Linux
+  const tables = [];
+  for (const path of ["/proc/net/tcp", "/proc/net/tcp6"]) {
+    try { tables.push(read(path)); } catch {}
+  }
+  if (tables.length === 0) return; // not Linux
   const hexPort = port.toString(16).toUpperCase().padStart(4, "0");
-  const owners = table.split("\n").slice(1)
+  const owners = tables.flatMap(table => table.split("\n").slice(1))
     .map(line => line.trim().split(/\s+/))
     .filter(f => f.length > 7 && f[1].endsWith(`:${hexPort}`) && f[3] === "0A")
     .map(f => Number(f[7]));
+  if (owners.length === 0) {
+    throw new Error(`Port ${port} answered but could not verify that its listening process is yours; refusing to connect.`);
+  }
   const foreign = owners.find(o => o !== uid);
   if (foreign !== undefined) {
     throw new Error(`Port ${port} is held by another user's process (uid ${foreign}); refusing to connect. Stop that process or set FOCUS_TODO_CDP_PORT.`);

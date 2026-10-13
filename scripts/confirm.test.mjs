@@ -53,3 +53,9 @@ test("an unanswered form counts as not confirmed", async () => {
   const s = fakeServer({ caps: { elicitation: {} }, error: Object.assign(new Error("MCP error -32001: Request timed out"), { code: -32001 }) });
   assert.equal(await createConfirm(s)({ message: "m" }), "declined");
 });
+
+test("the confirm box starts checked, so accepting the form confirms", async () => {
+  const s = fakeServer({ caps: { elicitation: {} }, reply: { action: "accept", content: {} } });
+  assert.equal(await createConfirm(s)({ message: "m" }), "accepted");
+  assert.equal(s.calls[0].requestedSchema.properties.confirm.default, true);
+});

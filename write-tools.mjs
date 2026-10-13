@@ -27,7 +27,7 @@ export const WRITE_TOOL_DEFINITIONS = [
   {
     name: "complete_tasks",
     title: "Complete tasks",
-    description: "Mark tasks as completed using the Focus To-Do app's own logic; recurring tasks get their next occurrence. Changes sync to the Focus To-Do cloud. Requires user confirmation.",
+    description: "Mark tasks as completed using the Focus To-Do app's own logic. Recurring tasks get their next occurrence, unless the series already has a later active occurrence (then the task is only completed, so no duplicate is created). Changes sync to the Focus To-Do cloud. Requires user confirmation.",
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputSchema,
   },

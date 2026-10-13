@@ -3,7 +3,7 @@
 const SCHEMA = {
   type: "object",
   properties: {
-    confirm: { type: "boolean", title: "Confirm", description: "Apply these changes to Focus To-Do" },
+    confirm: { type: "boolean", title: "Confirm", description: "Apply these changes to Focus To-Do", default: true },
   },
   required: ["confirm"],
 };
@@ -16,7 +16,8 @@ export function createConfirm(server) {
     if (!server.getClientCapabilities()?.elicitation) return "unavailable";
     try {
       const r = await server.elicitInput({ mode: "form", message, requestedSchema: SCHEMA }, { timeout: FORM_TIMEOUT_MS });
-      return r.action === "accept" && r.content?.confirm === true ? "accepted" : "declined";
+      // Accepting confirms; only an explicitly unchecked box (or decline/cancel) declines
+      return r.action === "accept" && r.content?.confirm !== false ? "accepted" : "declined";
     } catch (err) {
       if (/does not support/i.test(err.message)) return "unavailable";
       if (err.code === -32001) return "declined"; // the user did not answer in time

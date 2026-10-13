@@ -79,7 +79,7 @@ Environment variables: `FOCUS_TODO_USER_DATA_DIR` (default `~/.config/focustodo-
 
 | Tool | Description |
 |------|-------------|
-| `complete_tasks` | Complete tasks; recurring tasks get their next occurrence |
+| `complete_tasks` | Complete tasks; recurring tasks get their next occurrence unless the series already has one |
 | `skip_occurrences` | Skip the current occurrence of recurring tasks without counting it as done |
 | `remove_duplicate_tasks` | Delete extra copies found by `find_duplicate_tasks`; the kept copy is never deleted |
 

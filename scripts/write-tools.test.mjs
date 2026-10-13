@@ -204,3 +204,8 @@ test("complete_tasks keeps an existing next occurrence instead of creating anoth
   assert.deepEqual(calls.options[0], { successorOf: { late: "next" } });
   assert.match(calls.confirm[0].message, /late .*\[next occurrence already exists: 2026-10-14\]/);
 });
+
+test("complete_tasks describes the no-duplicate behaviour for recurring tasks", () => {
+  const d = WRITE_TOOL_DEFINITIONS.find(x => x.name === "complete_tasks").description;
+  assert.match(d, /unless the series already has a later active occurrence/);
+});

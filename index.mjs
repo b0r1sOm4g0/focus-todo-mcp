@@ -4,6 +4,10 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { loadAllData } from "./reader.mjs";
 import { READ_TOOL_DEFINITIONS, createReadHandlers } from "./read-tools.mjs";
+import { WRITE_TOOL_DEFINITIONS, createWriteHandlers } from "./write-tools.mjs";
+import { createConfirm } from "./confirm.mjs";
+import { createWriter } from "./writer.mjs";
+import { openSession } from "./bridge.mjs";
 
 // ── Data cache ────────────────────────────────────────────────────────────────
 
@@ -19,6 +23,10 @@ function getData() {
   return cache;
 }
 
+function invalidate() {
+  cache = null;
+}
+
 // ── MCP server ────────────────────────────────────────────────────────────────
 
 const server = new Server(
@@ -26,8 +34,11 @@ const server = new Server(
   { capabilities: { tools: {} } }
 );
 
-const TOOL_DEFINITIONS = [...READ_TOOL_DEFINITIONS];
-const handlers = { ...createReadHandlers({ getData }) };
+const TOOL_DEFINITIONS = [...READ_TOOL_DEFINITIONS, ...WRITE_TOOL_DEFINITIONS];
+const handlers = {
+  ...createReadHandlers({ getData }),
+  ...createWriteHandlers({ getData, invalidate, writer: createWriter({ openSession }), confirm: createConfirm(server) }),
+};
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOL_DEFINITIONS }));
 

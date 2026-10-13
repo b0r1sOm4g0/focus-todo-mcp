@@ -16,7 +16,8 @@
   "scripts": {
     "start": "node index.mjs",
     "test": "node scripts/test.mjs",
-    "test:unit": "node --test scripts/*.test.mjs"
+    "test:unit": "node --test scripts/*.test.mjs",
+    "test:e2e": "FOCUS_TODO_E2E=1 node scripts/e2e.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

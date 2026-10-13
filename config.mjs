@@ -13,6 +13,12 @@ export function getConfig(env = process.env) {
   };
 }
 
+// Desktop launcher written by `npm run setup:launcher`; the writer opens Chrome through it
+export const LAUNCHER_ID = "focus-todo";
+export function launcherPath() {
+  return join(homedir(), ".local", "share", "applications", `${LAUNCHER_ID}.desktop`);
+}
+
 // IndexedDB of the dedicated Chrome instance that the writer controls
 export function dedicatedIDBPath(config = getConfig()) {
   return join(config.userDataDir, "Default", "IndexedDB", IDB_DIR_NAME);

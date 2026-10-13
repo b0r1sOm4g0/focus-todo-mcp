@@ -161,8 +161,9 @@ function parseWAL(filepath) {
   const pendingFragments = [];
 
   while (pos + 7 <= data.length) {
-    // Detect block padding (all zeros)
-    if (data[pos] === 0 && data[pos + 1] === 0 && data[pos + 2] === 0 && data[pos + 3] === 0) {
+    // Block trailer too small for a header, or zero padding: skip to next block
+    if (BLOCK_SIZE - (pos % BLOCK_SIZE) < 7 ||
+        (data[pos] === 0 && data[pos + 1] === 0 && data[pos + 2] === 0 && data[pos + 3] === 0)) {
       const nextBlock = (Math.floor(pos / BLOCK_SIZE) + 1) * BLOCK_SIZE;
       pos = nextBlock;
       continue;

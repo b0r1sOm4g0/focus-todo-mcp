@@ -3,11 +3,10 @@ import { join } from "path";
 import { homedir } from "os";
 import { createRequire } from "module";
 import v8 from "v8";
+import { EXTENSION_ID as FOCUS_TODO_EXTENSION_ID, dedicatedIDBPath } from "./config.mjs";
 
 const require = createRequire(import.meta.url);
 const snappy = require("snappy");
-
-const FOCUS_TODO_EXTENSION_ID = "ngceodoilcgpmkijopinlkmohnfifjfb";
 
 // Auto-detect the Focus To-Do database path (Windows UWP app or Chrome extension on Linux/macOS/Windows).
 // Override with FOCUS_TODO_IDB_PATH env var for non-standard installations.
@@ -19,9 +18,13 @@ export function findIDBPath() {
     return process.env.FOCUS_TODO_IDB_PATH;
   }
 
+  // 1. Dedicated Chrome instance used by the writer (see README)
+  const dedicated = dedicatedIDBPath();
+  if (existsSync(dedicated)) return dedicated;
+
   const home = homedir();
 
-  // 1. Check Windows UWP App (Microsoft Store)
+  // 2. Check Windows UWP App (Microsoft Store)
   if (process.env.LOCALAPPDATA) {
     const packagesDir = join(process.env.LOCALAPPDATA, "Packages");
     try {
@@ -33,7 +36,7 @@ export function findIDBPath() {
     } catch {}
   }
 
-  // 2. Check Chrome Extension and Web App IndexedDB paths across browser profiles (Linux, macOS, Windows)
+  // 3. Check Chrome Extension and Web App IndexedDB paths across browser profiles (Linux, macOS, Windows)
   const browserConfigs = [
     // Linux ~/.config
     join(home, ".config", "google-chrome"),

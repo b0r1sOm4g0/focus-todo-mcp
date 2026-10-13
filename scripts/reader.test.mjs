@@ -1,11 +1,11 @@
 // Unit tests for reader.mjs using synthetic LevelDB files
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, rmSync } from "fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import v8 from "v8";
-import { loadAllData } from "../reader.mjs";
+import { loadAllData, findIDBPath } from "../reader.mjs";
 
 const BLOCK_SIZE = 32768;
 const HEADER_SIZE = 7;
@@ -72,4 +72,37 @@ test("reads WAL records that follow a block trailer shorter than a header", () =
 
   assert.equal(tasks.get("A")?.name, "filler");
   assert.equal(tasks.get("B")?.name, "after trailer");
+});
+
+function withEnv(vars, fn) {
+  const saved = Object.fromEntries(Object.keys(vars).map(k => [k, process.env[k]]));
+  for (const [k, v] of Object.entries(vars)) v === undefined ? delete process.env[k] : (process.env[k] = v);
+  try { return fn(); } finally {
+    for (const [k, v] of Object.entries(saved)) v === undefined ? delete process.env[k] : (process.env[k] = v);
+  }
+}
+
+test("findIDBPath prefers the dedicated Chrome instance", () => {
+  const dir = mkdtempSync(join(tmpdir(), "focus-todo-udd-"));
+  try {
+    const idb = join(dir, "Default", "IndexedDB", "chrome-extension_ngceodoilcgpmkijopinlkmohnfifjfb_0.indexeddb.leveldb");
+    mkdirSync(idb, { recursive: true });
+    const found = withEnv({ FOCUS_TODO_IDB_PATH: undefined, FOCUS_TODO_USER_DATA_DIR: dir }, () => findIDBPath());
+    assert.equal(found, idb);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("FOCUS_TODO_IDB_PATH still wins over the dedicated instance", () => {
+  const dir = mkdtempSync(join(tmpdir(), "focus-todo-udd-"));
+  try {
+    mkdirSync(join(dir, "Default", "IndexedDB", "chrome-extension_ngceodoilcgpmkijopinlkmohnfifjfb_0.indexeddb.leveldb"), { recursive: true });
+    const explicit = join(dir, "explicit");
+    mkdirSync(explicit);
+    const found = withEnv({ FOCUS_TODO_IDB_PATH: explicit, FOCUS_TODO_USER_DATA_DIR: dir }, () => findIDBPath());
+    assert.equal(found, explicit);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

@@ -55,8 +55,12 @@ try {
   assert.equal(completed.results[0].ok, true, JSON.stringify(completed));
   const skipped = await writer.skipOccurrences([rec.id]);
   assert.ok(skipped.results[0].nextOccurrence?.id, JSON.stringify(skipped));
-  const removed = await writer.deleteTasks([dupB.id]);
+  const removed = await writer.deleteTasks([dupB.id], { keepOf: { [dupB.id]: dupA.id } });
   assert.equal(removed.results[0].ok, true, JSON.stringify(removed));
+  // Stale snapshot: the occurrence was already skipped (deleted); the live check must refuse it
+  const again = await writer.skipOccurrences([rec.id]);
+  assert.equal(again.results[0].ok, false, JSON.stringify(again));
+  assert.match(again.results[0].error, /no longer active/);
 
   const check = await openSession();
   try {
@@ -68,6 +72,8 @@ try {
     assert.equal(next.rId, rec.rId, "next occurrence in the same series");
     assert.equal(byId.get(dupB.id).state, -1, "duplicate removed");
     assert.equal(byId.get(dupA.id).state, 0, "kept copy untouched");
+    const activeInSeries = [...byId.values()].filter(t => t.rId === rec.rId && t.state === 0 && !t.isFinished);
+    assert.equal(activeInSeries.length, 1, "refused retry created no extra occurrence");
     console.log("PASS: complete, skip and remove-duplicate work end to end");
   } finally {
     check.close();
@@ -79,7 +85,7 @@ try {
   const cleanup = await openSession();
   try {
     const leftovers = (await prefixedTasks(cleanup)).filter(t => t.state !== -1);
-    for (const t of leftovers) await cleanup.call("deleteTask", t.id);
+    for (const t of leftovers) await cleanup.call("deleteTask", t.id, { allowFinished: true });
     await cleanup.syncAndWait(leftovers.map(t => t.id));
   } finally {
     cleanup.close();

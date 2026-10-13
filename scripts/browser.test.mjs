@@ -145,3 +145,39 @@ test("checkPortOwner also inspects IPv6 (dual-stack) listeners", () => {
 test("checkPortOwner fails closed when no listener owner can be found", () => {
   assert.throws(() => checkPortOwner(9222, { read: () => TCP_EMPTY, uid: 1000 }), /could not verify/);
 });
+
+import { EventEmitter } from "events";
+import { launchViaDesktop, chromeNotFoundMessage } from "../browser.mjs";
+
+function fakeSpawn(event, payload) {
+  return (cmd, args) => {
+    const child = new EventEmitter();
+    child.cmd = [cmd, ...args];
+    child.unref = () => {};
+    setTimeout(() => child.emit(event, payload), 0);
+    return child;
+  };
+}
+
+test("launchViaDesktop resolves once gtk-launch starts", async () => {
+  await launchViaDesktop(fakeSpawn("spawn"));
+});
+
+test("a missing gtk-launch becomes a clear error instead of crashing the server", async () => {
+  await assert.rejects(launchViaDesktop(fakeSpawn("error", Object.assign(new Error("spawn gtk-launch ENOENT"), { code: "ENOENT" }))), /gtk-launch not found.*open the dedicated/s);
+});
+
+test("the timeout message points at the launcher's Chrome path", async () => {
+  const probe = await fakeDevtools();
+  const port = probe.address().port;
+  await new Promise(r => probe.close(r));
+  await assert.rejects(
+    ensureBrowser({ config: cfg(port), launcherExists: () => true, launch: () => {}, checkOwner: noCheck, timeoutMs: 100, pollMs: 20 }),
+    /launcher ran.*npm run setup:launcher/s,
+  );
+});
+
+test("chromeNotFoundMessage lists what was tried", () => {
+  assert.match(chromeNotFoundMessage({ chromePath: null }), /Tried: \/opt\/google\/chrome\/chrome, .*FOCUS_TODO_CHROME_PATH/);
+  assert.match(chromeNotFoundMessage({ chromePath: "/x/chrome" }), /Tried: \/x\/chrome\./);
+});

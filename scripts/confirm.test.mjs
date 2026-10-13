@@ -7,7 +7,8 @@ function fakeServer({ caps, reply, error } = {}) {
   return {
     calls,
     getClientCapabilities: () => caps,
-    elicitInput: async params => { calls.push(params); if (error) throw error; return reply; },
+    options: [],
+    elicitInput: async (params, options) => { calls.push(params); calls.options = options; if (error) throw error; return reply; },
   };
 }
 
@@ -38,6 +39,17 @@ test("unavailable when the client rejects form elicitation", async () => {
 });
 
 test("other elicitation errors propagate", async () => {
-  const s = fakeServer({ caps: { elicitation: {} }, error: new Error("Request timed out") });
-  await assert.rejects(createConfirm(s)({ message: "m" }), /timed out/);
+  const s = fakeServer({ caps: { elicitation: {} }, error: new Error("Connection closed") });
+  await assert.rejects(createConfirm(s)({ message: "m" }), /Connection closed/);
+});
+
+test("the form waits up to 10 minutes for the user", async () => {
+  const s = fakeServer({ caps: { elicitation: {} }, reply: { action: "decline" } });
+  await createConfirm(s)({ message: "m" });
+  assert.ok(s.calls.options?.timeout >= 600_000);
+});
+
+test("an unanswered form counts as not confirmed", async () => {
+  const s = fakeServer({ caps: { elicitation: {} }, error: Object.assign(new Error("MCP error -32001: Request timed out"), { code: -32001 }) });
+  assert.equal(await createConfirm(s)({ message: "m" }), "declined");
 });

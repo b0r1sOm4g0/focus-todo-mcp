@@ -6,8 +6,8 @@ function fakeSession({ replies = {}, pending = [], idle = true } = {}) {
   const log = [];
   return {
     log,
-    async call(method, id) {
-      log.push(["call", method, id]);
+    async call(method, id, guard) {
+      log.push(["call", method, id, guard]);
       const r = replies[id];
       if (r instanceof Error) throw r;
       return r;
@@ -66,9 +66,53 @@ test("passes through pending sync ids and a skipped reload (pomodoro running)", 
   assert.equal(out.uiRefreshed, false);
 });
 
-test("session is closed even when sync throws", async () => {
+test("a failure after the writes still returns the results, with a warning", async () => {
   const s = fakeSession();
   s.syncAndWait = async () => { throw new Error("socket closed"); };
-  await assert.rejects(createWriter({ openSession: async () => s }).deleteTasks(["d"]), /socket closed/);
+  const out = await createWriter({ openSession: async () => s }).deleteTasks(["d"]);
+  assert.deepEqual(out.results, [{ id: "d", ok: true }]);
+  assert.deepEqual(out.pendingSync, ["d"]);
+  assert.equal(out.uiRefreshed, false);
+  assert.match(out.warning, /applied.*socket closed/);
   assert.equal(s.log.at(-1)[0], "close");
+});
+
+test("each method sends the live-state guard the page must check", async () => {
+  const s = fakeSession();
+  const w = createWriter({ openSession: async () => s });
+  await w.completeTasks(["a"]);
+  await w.skipOccurrences(["r"]);
+  await w.deleteTasks(["d"], { keepOf: { d: "k" } });
+  assert.deepEqual(s.log.filter(e => e[0] === "call").map(e => e[3]), [{}, { recurring: true }, { keepId: "k" }]);
+});
+
+test("calls are serialized: the second waits until the first session closes", async () => {
+  const order = [];
+  let release;
+  const gate = new Promise(r => { release = r; });
+  let n = 0;
+  const openSession = async () => {
+    const i = ++n;
+    order.push(`open${i}`);
+    const s = fakeSession();
+    if (i === 1) s.call = async () => { await gate; };
+    const close = s.close;
+    s.close = () => { order.push(`close${i}`); close(); };
+    return s;
+  };
+  const w = createWriter({ openSession });
+  const first = w.completeTasks(["a"]);
+  const second = w.skipOccurrences(["r"]);
+  await new Promise(r => setTimeout(r, 20));
+  assert.deepEqual(order, ["open1"]);
+  release();
+  await Promise.all([first, second]);
+  assert.deepEqual(order, ["open1", "close1", "open2", "close2"]);
+});
+
+test("a failed call does not block the next one", async () => {
+  let n = 0;
+  const w = createWriter({ openSession: async () => { if (++n === 1) throw new Error("no browser"); return fakeSession(); } });
+  await assert.rejects(w.completeTasks(["a"]), /no browser/);
+  assert.equal((await w.completeTasks(["a"])).results[0].ok, true);
 });

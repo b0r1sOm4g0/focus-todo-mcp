@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readdirSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { pathToFileURL } from "url";
 import { EXTENSION_ID, getConfig, launcherPath } from "../config.mjs";
-import { resolveChromePath, buildLaunchArgs } from "../browser.mjs";
+import { resolveChromePath, buildLaunchArgs, chromeNotFoundMessage } from "../browser.mjs";
 
 // Desktop Entry spec: quote arguments containing reserved characters
 function quoteExec(arg) {
@@ -40,7 +40,7 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const config = getConfig();
   const chromePath = resolveChromePath(config);
   if (!chromePath) {
-    console.error("Chrome not found. Set FOCUS_TODO_CHROME_PATH to the Chrome executable.");
+    console.error(chromeNotFoundMessage(config));
     process.exit(1);
   }
   const file = launcherPath();

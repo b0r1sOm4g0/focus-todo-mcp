@@ -2,6 +2,7 @@
 import { connectCDP } from "./cdp.mjs";
 import { ensureBrowser, findExtensionTarget } from "./browser.mjs";
 import { getConfig } from "./config.mjs";
+import { liveTaskProblem, appliedProblem } from "./guards.mjs";
 
 const GROUP = "focus-todo-mcp";
 const SERVICES_LOST = "focus-todo-mcp: services not located";
@@ -113,11 +114,22 @@ async function locateServices(cdp) {
   }
 }
 
-function callService(cdp, method, id) {
+// Re-checks the live record first (the reader's snapshot may be stale and the app's methods check
+// nothing), calls the app, then reads the record back so success is reported only if it applied
+function callService(cdp, method, id, guard = {}) {
   return cdp.evaluate(`(async () => {
+    const liveTaskProblem = ${liveTaskProblem.toString()};
+    const appliedProblem = ${appliedProblem.toString()};
     const s = window.__focusTodoMcp && window.__focusTodoMcp.taskService;
     if (!s) throw new Error(${JSON.stringify(SERVICES_LOST)});
-    const r = await s[${JSON.stringify(method)}](${JSON.stringify(id)});
+    const method = ${JSON.stringify(method)}, id = ${JSON.stringify(id)}, guard = ${JSON.stringify(guard)};
+    const task = await s.fetchTaskById(id);
+    const keep = guard.keepId ? await s.fetchTaskById(guard.keepId) : undefined;
+    const before = liveTaskProblem(task, guard, keep);
+    if (before) throw new Error(before);
+    const r = await s[method](id);
+    const after = appliedProblem(method, await s.fetchTaskById(id));
+    if (after) throw new Error(after);
     return r == null ? null : JSON.parse(JSON.stringify(r));
   })()`);
 }
@@ -170,14 +182,14 @@ export async function openSession({ config = getConfig() } = {}) {
     throw err;
   }
   return {
-    async call(method, id) {
+    async call(method, id, guard) {
       try {
-        return await callService(cdp, method, id);
+        return await callService(cdp, method, id, guard);
       } catch (err) {
         if (!String(err.message).includes(SERVICES_LOST)) throw err;
         await waitForApp(cdp);
         await locateServices(cdp);
-        return callService(cdp, method, id);
+        return callService(cdp, method, id, guard);
       }
     },
     syncAndWait: (ids, timeoutMs) => syncAndWait(cdp, ids, timeoutMs),

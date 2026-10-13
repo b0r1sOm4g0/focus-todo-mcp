@@ -11,10 +11,12 @@ function data(tasks) {
   };
 }
 
-function setup(tasks, { decision = "accepted", result } = {}) {
-  const calls = { writer: [], confirm: [], invalidated: 0 };
-  const respond = method => async ids => {
+function setup(tasks, { decision = "accepted", result, fail } = {}) {
+  const calls = { writer: [], confirm: [], invalidated: 0, options: [] };
+  const respond = method => async (ids, options) => {
     calls.writer.push([method, ids]);
+    calls.options.push(options);
+    if (fail) throw fail;
     return result ?? { results: ids.map(id => ({ id, ok: true })), pendingSync: [], uiRefreshed: true };
   };
   const h = createWriteHandlers({
@@ -161,4 +163,33 @@ test("reports next occurrences, failures, pending sync and a skipped reload", as
   assert.match(text, /Failed b: boom/);
   assert.match(text, /not yet confirmed by the sync server: N1/);
   assert.match(text, /window was not reloaded/);
+});
+
+test("remove_duplicate_tasks tells the writer which copy each removal keeps", async () => {
+  const { h, calls } = setup([
+    { id: "keep", rCycle: 1, rId: "S1", creationDate: 1 },
+    { id: "extra", rCycle: 1, rId: "S1", creationDate: 2 },
+  ]);
+  await h.remove_duplicate_tasks({ task_ids: ["extra"] });
+  assert.deepEqual(calls.options[0], { keepOf: { extra: "keep" } });
+});
+
+test("the form says which pomodoros and subtasks a duplicate removal deletes", async () => {
+  const { h, calls } = setup([
+    { id: "keep", rCycle: 1, rId: "S1", actualPomoNum: 4, creationDate: 1 },
+    { id: "extra", rCycle: 1, rId: "S1", actualPomoNum: 3, hasSubtask: true, creationDate: 2 },
+  ]);
+  await h.remove_duplicate_tasks({ task_ids: ["extra"] });
+  assert.match(calls.confirm[0].message, /extra .*deletes its 3 pomodoro\(s\) and subtasks/);
+});
+
+test("the cache is invalidated even when the writer fails", async () => {
+  const { h, calls } = setup([{ id: "a" }], { fail: new Error("CDP connection closed") });
+  await assert.rejects(h.complete_tasks({ task_ids: ["a"] }), /closed/);
+  assert.equal(calls.invalidated, 1);
+});
+
+test("a writer warning reaches the result text", async () => {
+  const { h } = setup([{ id: "a" }], { result: { results: [{ id: "a", ok: true }], pendingSync: ["a"], uiRefreshed: false, warning: "The changes were applied, but X" } });
+  assert.match(await h.complete_tasks({ task_ids: ["a"] }), /The changes were applied, but X/);
 });

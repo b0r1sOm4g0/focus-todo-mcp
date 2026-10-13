@@ -87,20 +87,25 @@ function validateRemoveDuplicates(ids, tasks) {
   const valid = [], rejected = [];
   for (const id of ids) {
     if (kept.has(id)) rejected.push({ id, reason: "this is the copy kept for its duplicate group" });
-    else if (removable.has(id)) valid.push(removable.get(id));
+    else if (removable.has(id)) {
+      const entry = removable.get(id), t = entry.task;
+      const losses = [t.actualPomoNum > 0 && `its ${t.actualPomoNum} pomodoro(s)`, t.hasSubtask && "subtasks"].filter(Boolean);
+      valid.push(losses.length ? { ...entry, warn: `deletes ${losses.join(" and ")}` } : entry);
+    }
     else if (!tasks.has(id)) rejected.push({ id, reason: "task not found" });
     else rejected.push({ id, reason: "task is not a duplicate" });
   }
   return { valid, skipped: [], rejected };
 }
 
-function formatResults({ doneLabel, results, pendingSync, uiRefreshed, notes }) {
+function formatResults({ doneLabel, results, pendingSync, uiRefreshed, warning, notes }) {
   const ok = results.filter(r => r.ok);
   const out = [`${doneLabel} ${ok.length}/${results.length}.`];
   const next = ok.filter(r => r.nextOccurrence);
   if (next.length) out.push(`Next occurrences: ${next.map(r => `${r.nextOccurrence.id} (${ts(r.nextOccurrence.deadline) ?? "no deadline"})`).join(", ")}`);
   for (const r of results.filter(r => !r.ok)) out.push(`Failed ${r.id}: ${r.error}`);
   out.push(...notes);
+  if (warning) out.push(warning);
   if (pendingSync.length) out.push(`Saved locally but not yet confirmed by the sync server: ${pendingSync.join(", ")}. They upload on the next sync.`);
   if (ok.length && !uiRefreshed) out.push("The Focus To-Do window was not reloaded (a pomodoro is running or its state is unknown); it shows the changes on its next refresh.");
   return out.join("\n");
@@ -122,7 +127,7 @@ export function createWriteHandlers({ getData, invalidate, writer, confirm }) {
     ];
     if (valid.length === 0) return ["Nothing to do.", ...notes].join("\n");
 
-    const lines = valid.map(v => `- ${describe(v.task, projects)}${v.keep ? ` (keeps ${describe(v.keep, projects)})` : ""}`);
+    const lines = valid.map(v => `- ${describe(v.task, projects)}${v.warn ? ` [${v.warn}]` : ""}${v.keep ? ` (keeps ${describe(v.keep, projects)})` : ""}`);
     const validIds = valid.map(v => v.task.id);
     const decision = await confirm({ message: `${verb} ${valid.length} task(s) in Focus To-Do?\n${lines.join("\n")}` });
     if (decision === "declined") return ["Cancelled; nothing was changed.", ...notes].join("\n");
@@ -138,14 +143,16 @@ export function createWriteHandlers({ getData, invalidate, writer, confirm }) {
       }
     }
 
-    const outcome = await execute(validIds);
-    invalidate();
-    return formatResults({ doneLabel, ...outcome, notes });
+    try {
+      return formatResults({ doneLabel, ...(await execute(validIds, valid)), notes });
+    } finally {
+      invalidate(); // even on failure: some writes may have been applied
+    }
   }
 
   return {
     complete_tasks: args => run({ tool: "complete_tasks", verb: "Complete", doneLabel: "Completed", args, validate: validateComplete, execute: ids => writer.completeTasks(ids) }),
     skip_occurrences: args => run({ tool: "skip_occurrences", verb: "Skip the current occurrence of", doneLabel: "Skipped", args, validate: validateSkip, execute: ids => writer.skipOccurrences(ids) }),
-    remove_duplicate_tasks: args => run({ tool: "remove_duplicate_tasks", verb: "Delete duplicate", doneLabel: "Removed", args, validate: validateRemoveDuplicates, execute: ids => writer.deleteTasks(ids) }),
+    remove_duplicate_tasks: args => run({ tool: "remove_duplicate_tasks", verb: "Delete duplicate", doneLabel: "Removed", args, validate: validateRemoveDuplicates, execute: (ids, valid) => writer.deleteTasks(ids, { keepOf: Object.fromEntries(valid.map(v => [v.task.id, v.keep.id])) }) }),
   };
 }

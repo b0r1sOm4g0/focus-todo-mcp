@@ -35,8 +35,7 @@ test("write tools are annotated as in the spec", () => {
   assert.deepEqual(byName.remove_duplicate_tasks, { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true });
   for (const d of WRITE_TOOL_DEFINITIONS) {
     assert.equal(d.inputSchema.properties.task_ids.maxItems, 50);
-    assert.ok(d.inputSchema.properties.confirmation_token);
-    assert.equal(d.inputSchema.properties.confirmed, undefined);
+    assert.deepEqual(Object.keys(d.inputSchema.properties), ["task_ids"]);
   }
 });
 
@@ -77,46 +76,16 @@ test("more than 50 IDs is an error", async () => {
   await assert.rejects(h.complete_tasks({ task_ids: ids }), /At most 50/);
 });
 
-const tokenOf = text => text.match(/confirmation_token: "([^"]+)"/)?.[1];
-
-test("without a form: preview changes nothing and issues a token", async () => {
-  const { h, calls } = setup([{ id: "a" }], { decision: "unavailable" });
-  const text = await h.complete_tasks({ task_ids: ["a"] });
-  assert.equal(calls.writer.length, 0);
-  assert.match(text, /nothing was changed/);
-  assert.ok(tokenOf(text));
-});
-
-test("without a form: the preview token applies exactly the previewed IDs", async () => {
-  const { h, calls } = setup([{ id: "a" }, { id: "b" }], { decision: "unavailable" });
-  const token = tokenOf(await h.complete_tasks({ task_ids: ["b", "a"] }));
-  assert.match(await h.complete_tasks({ task_ids: ["a", "b"], confirmation_token: token }), /Completed 2\/2/);
-  assert.deepEqual(calls.writer, [["complete", ["a", "b"]]]);
-});
-
-test("without a form: an invented token only produces a new preview", async () => {
-  const { h, calls } = setup([{ id: "a" }], { decision: "unavailable" });
-  const text = await h.complete_tasks({ task_ids: ["a"], confirmation_token: "made-up" });
-  assert.equal(calls.writer.length, 0);
-  assert.match(text, /nothing was changed/);
-});
-
-test("without a form: a token is single-use and bound to its IDs and tool", async () => {
-  const { h, calls } = setup([{ id: "a" }, { id: "b" }, { id: "r", rCycle: 1, rId: "S1" }], { decision: "unavailable" });
-  const token = tokenOf(await h.complete_tasks({ task_ids: ["a"] }));
-  assert.match(await h.complete_tasks({ task_ids: ["a", "b"], confirmation_token: token }), /nothing was changed/);
-  const t2 = tokenOf(await h.complete_tasks({ task_ids: ["r"] }));
-  assert.match(await h.skip_occurrences({ task_ids: ["r"], confirmation_token: t2 }), /nothing was changed/);
-  const t3 = tokenOf(await h.complete_tasks({ task_ids: ["a"] }));
-  await h.complete_tasks({ task_ids: ["a"], confirmation_token: t3 });
-  assert.match(await h.complete_tasks({ task_ids: ["a"], confirmation_token: t3 }), /nothing was changed/);
-  assert.deepEqual(calls.writer, [["complete", ["a"]]]);
-});
-
-test("with a form, a token cannot bypass a declined form", async () => {
-  const { h, calls } = setup([{ id: "a" }], { decision: "declined" });
-  assert.match(await h.complete_tasks({ task_ids: ["a"], confirmation_token: "anything" }), /Cancelled/);
-  assert.equal(calls.writer.length, 0);
+test("without confirmation forms, writes are refused and nothing changes", async () => {
+  for (const tool of ["complete_tasks", "skip_occurrences", "remove_duplicate_tasks"]) {
+    const { h, calls } = setup([
+      { id: "a", rCycle: 1, rId: "S1", creationDate: 1 },
+      { id: "b", rCycle: 1, rId: "S1", creationDate: 2 },
+    ], { decision: "unavailable" });
+    const text = await h[tool]({ task_ids: ["b"] });
+    assert.equal(calls.writer.length, 0, tool);
+    assert.match(text, /confirmation forms.*nothing was changed/s, tool);
+  }
 });
 
 test("declined changes nothing", async () => {

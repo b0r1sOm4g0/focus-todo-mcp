@@ -83,7 +83,7 @@ Environment variables: `FOCUS_TODO_USER_DATA_DIR` (default `~/.config/focustodo-
 | `skip_occurrences` | Skip the current occurrence of recurring tasks without counting it as done |
 | `remove_duplicate_tasks` | Delete extra copies found by `find_duplicate_tasks`; the kept copy is never deleted |
 
-Every write asks for confirmation: a form in clients that support it (Claude Code), otherwise a preview with a single-use confirmation token bound to the exact tasks. Changes sync to the Focus To-Do cloud through the app itself.
+Every write is confirmed by you in a form (MCP elicitation, supported by Claude Code). Clients without confirmation forms can read but cannot write, so approval never rests with the model. Changes sync to the Focus To-Do cloud through the app itself.
 
 ## How it works
 

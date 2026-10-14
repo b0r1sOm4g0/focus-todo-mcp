@@ -1,7 +1,6 @@
 // Write tools: definitions, validation against current data, confirmation and result text
 import { isActive, isRecurring, findDuplicateGroups, findSuccessor } from "./filters.mjs";
 import { ts, projectName } from "./format.mjs";
-import { randomUUID } from "crypto";
 
 export const MAX_TASK_IDS = 50;
 
@@ -15,10 +14,6 @@ const inputSchema = {
       maxItems: MAX_TASK_IDS,
       description: "Focus To-Do task IDs (from list_tasks, search_tasks or find_duplicate_tasks)",
     },
-    confirmation_token: {
-      type: "string",
-      description: "Single-use token from a preview the user approved, valid only for the same tool and task IDs. Used only when the client has no confirmation forms.",
-    },
   },
   required: ["task_ids"],
 };
@@ -27,21 +22,21 @@ export const WRITE_TOOL_DEFINITIONS = [
   {
     name: "complete_tasks",
     title: "Complete tasks",
-    description: "Mark tasks as completed using the Focus To-Do app's own logic. Recurring tasks get their next occurrence, unless the series already has a later active occurrence (then the task is only completed, so no duplicate is created). Changes sync to the Focus To-Do cloud. Requires user confirmation.",
+    description: "Mark tasks as completed using the Focus To-Do app's own logic. Recurring tasks get their next occurrence, unless the series already has a later active occurrence (then the task is only completed, so no duplicate is created). Changes sync to the Focus To-Do cloud. The user confirms each write in a form; clients without confirmation forms cannot write.",
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputSchema,
   },
   {
     name: "skip_occurrences",
     title: "Skip recurring occurrences",
-    description: "Skip the current occurrence of recurring tasks: the next occurrence is created and the current one is deleted without counting as completed. Changes sync to the Focus To-Do cloud. Requires user confirmation.",
+    description: "Skip the current occurrence of recurring tasks: the next occurrence is created and the current one is deleted without counting as completed. Changes sync to the Focus To-Do cloud. The user confirms each write in a form; clients without confirmation forms cannot write.",
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     inputSchema,
   },
   {
     name: "remove_duplicate_tasks",
     title: "Remove duplicate tasks",
-    description: "Delete extra copies reported by find_duplicate_tasks (including their subtasks and pomodoros). The copy kept for each group is never deleted. Changes sync to the Focus To-Do cloud. Requires user confirmation.",
+    description: "Delete extra copies reported by find_duplicate_tasks (including their subtasks and pomodoros). The copy kept for each group is never deleted. Changes sync to the Focus To-Do cloud. The user confirms each write in a form; clients without confirmation forms cannot write.",
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     inputSchema,
   },
@@ -116,12 +111,9 @@ function formatResults({ doneLabel, results, pendingSync, uiRefreshed, warning, 
 }
 
 export function createWriteHandlers({ getData, invalidate, writer, confirm }) {
-  // Previews issued to clients without confirmation forms: token -> tool + exact IDs
-  const previews = new Map();
-  const previewKey = (tool, ids) => `${tool}|${[...ids].sort().join(",")}`;
   const describe = (t, projects) => `${t.name} · ${projectName(projects, t.projectId)} · ${ts(t.deadline) ?? "no deadline"}`;
 
-  async function run({ tool, verb, doneLabel, args, validate, execute }) {
+  async function run({ verb, doneLabel, args, validate, execute }) {
     const ids = normalizeIds(args.task_ids);
     const { projects, tasks } = getData();
     const { valid, skipped, rejected } = validate(ids, tasks);
@@ -135,16 +127,9 @@ export function createWriteHandlers({ getData, invalidate, writer, confirm }) {
     const validIds = valid.map(v => v.task.id);
     const decision = await confirm({ message: `${verb} ${valid.length} task(s) in Focus To-Do?\n${lines.join("\n")}` });
     if (decision === "declined") return ["Cancelled; nothing was changed.", ...notes].join("\n");
+    // Only the user can approve a write; a client without forms would leave approval to the model
     if (decision === "unavailable") {
-      const key = previewKey(tool, validIds);
-      const approved = args.confirmation_token && previews.get(args.confirmation_token) === key;
-      previews.delete(args.confirmation_token);
-      if (!approved) {
-        const token = randomUUID();
-        previews.set(token, key);
-        return [`Confirmation required; nothing was changed. ${verb} ${valid.length} task(s):`, ...lines, ...notes,
-          `To apply after the user approves, call ${tool} again with the same task_ids and confirmation_token: "${token}".`].join("\n");
-      }
+      return [`Writes need a client with confirmation forms (MCP elicitation, e.g. Claude Code); nothing was changed. Would ${verb.toLowerCase()} ${valid.length} task(s):`, ...lines, ...notes].join("\n");
     }
 
     try {
@@ -155,8 +140,8 @@ export function createWriteHandlers({ getData, invalidate, writer, confirm }) {
   }
 
   return {
-    complete_tasks: args => run({ tool: "complete_tasks", verb: "Complete", doneLabel: "Completed", args, validate: validateComplete, execute: (ids, valid) => writer.completeTasks(ids, { successorOf: Object.fromEntries(valid.filter(v => v.successor).map(v => [v.task.id, v.successor.id])) }) }),
-    skip_occurrences: args => run({ tool: "skip_occurrences", verb: "Skip the current occurrence of", doneLabel: "Skipped", args, validate: validateSkip, execute: ids => writer.skipOccurrences(ids) }),
-    remove_duplicate_tasks: args => run({ tool: "remove_duplicate_tasks", verb: "Delete duplicate", doneLabel: "Removed", args, validate: validateRemoveDuplicates, execute: (ids, valid) => writer.deleteTasks(ids, { keepOf: Object.fromEntries(valid.map(v => [v.task.id, v.keep.id])) }) }),
+    complete_tasks: args => run({ verb: "Complete", doneLabel: "Completed", args, validate: validateComplete, execute: (ids, valid) => writer.completeTasks(ids, { successorOf: Object.fromEntries(valid.filter(v => v.successor).map(v => [v.task.id, v.successor.id])) }) }),
+    skip_occurrences: args => run({ verb: "Skip the current occurrence of", doneLabel: "Skipped", args, validate: validateSkip, execute: ids => writer.skipOccurrences(ids) }),
+    remove_duplicate_tasks: args => run({ verb: "Delete duplicate", doneLabel: "Removed", args, validate: validateRemoveDuplicates, execute: (ids, valid) => writer.deleteTasks(ids, { keepOf: Object.fromEntries(valid.map(v => [v.task.id, v.keep.id])) }) }),
   };
 }

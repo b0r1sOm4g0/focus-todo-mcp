@@ -144,8 +144,45 @@ function formatResults({ doneLabel, results, pendingSync, uiRefreshed, warning, 
 }
 
 function endOfDay(dateStr) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) throw new Error(`Invalid date format: ${dateStr} (expected YYYY-MM-DD)`);
   const [y, m, d] = dateStr.split("-").map(Number);
-  return new Date(y, m - 1, d, 23, 59, 59, 999).getTime();
+  const dt = new Date(y, m - 1, d, 23, 59, 59, 999);
+  if (dt.getFullYear() !== y || dt.getMonth() !== m - 1 || dt.getDate() !== d) throw new Error(`Invalid calendar date: ${dateStr}`);
+  return dt.getTime();
+}
+
+function validateCreateArgs(args) {
+  const name = String(args.name ?? "").replace(/[\x00-\x1f]/g, "").trim();
+  if (!name || name.length > 500) throw new Error("name must be 1–500 characters with no control characters");
+  const out = { name };
+  if (args.project_id != null) out.project_id = String(args.project_id);
+  if (args.priority != null) {
+    const p = Number(args.priority);
+    if (![0, 1, 2, 3].includes(p)) throw new Error("priority must be 0, 1, 2 or 3");
+    out.priority = p;
+  }
+  if (args.notes != null) {
+    const notes = String(args.notes).replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "").slice(0, 5000);
+    if (notes) out.notes = notes;
+  }
+  if (args.estimated_pomos != null) {
+    const ep = Math.floor(Number(args.estimated_pomos));
+    if (!Number.isFinite(ep) || ep < 0 || ep > 999) throw new Error("estimated_pomos must be 0–999");
+    out.estimated_pomos = ep;
+  }
+  if (args.deadline != null) out.deadline = String(args.deadline);
+  if (args.recurrence != null) {
+    const r = args.recurrence;
+    if (!["days", "weeks", "months"].includes(r.unit)) throw new Error("recurrence.unit must be days, weeks or months");
+    const cycle = Math.floor(Number(r.cycle ?? 1));
+    if (!Number.isFinite(cycle) || cycle < 1 || cycle > 365) throw new Error("recurrence.cycle must be 1–365");
+    const rec = { unit: r.unit, cycle };
+    if (r.unit === "weeks" && Array.isArray(r.days)) {
+      rec.days = r.days.map(d => { const n = Number(d); if (![0,1,2,3,4,5,6].includes(n)) throw new Error("recurrence.days values must be 0–6"); return n; });
+    }
+    out.recurrence = rec;
+  }
+  return out;
 }
 
 function buildTaskFields(args) {
@@ -157,7 +194,7 @@ function buildTaskFields(args) {
   if (args.deadline) fields.deadline = endOfDay(args.deadline);
   if (args.recurrence) {
     const r = args.recurrence;
-    fields.rCycle = r.cycle ?? 1;
+    fields.rCycle = r.cycle;
     fields.rUnit = r.unit;
     fields.rValue = r.unit === "weeks" && r.days ? r.days.join(",") : "";
     fields.rFirstDeadline = fields.deadline || endOfDay(new Date().toLocaleDateString("en-CA"));
@@ -167,14 +204,16 @@ function buildTaskFields(args) {
 }
 
 function describeCreate(args, projects) {
+  const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const parts = [args.name];
   if (args.project_id) parts.push(`in ${projectName(projects, args.project_id)}`);
   if (args.priority) parts.push(`priority ${["none", "low", "medium", "high"][args.priority]}`);
   if (args.deadline) parts.push(`deadline ${args.deadline}`);
+  if (args.notes) parts.push(`notes: "${args.notes.length > 80 ? args.notes.slice(0, 77) + "…" : args.notes}"`);
+  if (args.estimated_pomos) parts.push(`${args.estimated_pomos} pomodoros`);
   if (args.recurrence) {
     const r = args.recurrence;
-    const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    const cycle = r.cycle && r.cycle > 1 ? `every ${r.cycle} ${r.unit}` : `every ${r.unit.replace(/s$/, "")}`;
+    const cycle = r.cycle > 1 ? `every ${r.cycle} ${r.unit}` : `every ${r.unit.replace(/s$/, "")}`;
     const days = r.unit === "weeks" && r.days ? ` on ${r.days.map(d => dayNames[d]).join("/")}` : "";
     parts.push(`recurring ${cycle}${days}`);
   }
@@ -184,17 +223,17 @@ function describeCreate(args, projects) {
 export function createWriteHandlers({ getData, invalidate, writer, confirm }) {
   const describe = (t, projects) => `${t.name} · ${projectName(projects, t.projectId)} · ${ts(t.deadline) ?? "no deadline"}`;
 
-  async function runCreate(args) {
-    if (!args.name || !args.name.trim()) throw new Error("name is required");
+  async function runCreate(rawArgs) {
+    const args = validateCreateArgs(rawArgs);
     const { projects } = getData();
     if (args.project_id && !projects.has(args.project_id)) throw new Error(`Project not found: ${args.project_id}`);
 
+    const fields = buildTaskFields(args);
     const summary = describeCreate(args, projects);
     const decision = await confirm({ message: `Create task in Focus To-Do?\n- ${summary}` });
     if (decision === "declined") return "Cancelled; nothing was created.";
     if (decision === "unavailable") return `Writes need a client with confirmation forms (MCP elicitation, e.g. Claude Code); nothing was created. Would create:\n- ${summary}`;
 
-    const fields = buildTaskFields(args);
     try {
       return await writer.createTask(fields);
     } finally {

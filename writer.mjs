@@ -40,6 +40,33 @@ export function createWriter({ openSession }) {
   }
 
   return {
+    createTask: fields => serialized(async () => {
+      const session = await openSession();
+      try {
+        const result = await session.evaluate(`(async () => {
+          const s = window.__focusTodoMcp && window.__focusTodoMcp.taskService;
+          if (!s) throw new Error("focus-todo-mcp: taskService not located");
+          const fields = ${JSON.stringify(fields)};
+          const task = await s.addTask(fields);
+          return task == null ? null : JSON.parse(JSON.stringify(task));
+        })()`);
+        const id = result?.id || fields.id;
+        let pendingSync = id ? [id] : [], uiRefreshed = false, warning;
+        try {
+          if (id) pendingSync = await session.syncAndWait([id]);
+          uiRefreshed = await session.refreshIfIdle();
+        } catch (err) {
+          warning = `Task created, but sync/refresh failed: ${err.message}`;
+        }
+        const out = [`Created task: ${fields.name} (${id || "unknown id"})`];
+        if (warning) out.push(warning);
+        if (pendingSync.length) out.push(`Saved locally but not yet confirmed by the sync server: ${pendingSync.join(", ")}.`);
+        if (!uiRefreshed) out.push("The Focus To-Do window was not reloaded (a pomodoro is running or its state is unknown); it shows the task on its next refresh.");
+        return out.join("\n");
+      } finally {
+        session.close();
+      }
+    }),
     // successorOf: tasks whose series already has a later active occurrence are finished without
     // generating another one (the app's completeTask always generates)
     completeTasks: (ids, { successorOf = {} } = {}) => serialized(() => run(ids,

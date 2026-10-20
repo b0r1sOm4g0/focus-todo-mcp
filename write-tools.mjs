@@ -18,7 +18,40 @@ const inputSchema = {
   required: ["task_ids"],
 };
 
+const createTaskSchema = {
+  type: "object",
+  properties: {
+    name: { type: "string", description: "Task name (required)" },
+    project_id: { type: "string", description: "Project ID to add the task to (from list_projects). Omit for the default Inbox." },
+    priority: { type: "number", enum: [0, 1, 2, 3], description: "0 = none (default), 1 = low, 2 = medium, 3 = high" },
+    deadline: { type: "string", description: "Deadline date as YYYY-MM-DD. Sets the task's due date to end-of-day local time." },
+    notes: { type: "string", description: "Task notes or description (remark field)" },
+    estimated_pomos: { type: "number", description: "Estimated number of pomodoros" },
+    recurrence: {
+      type: "object",
+      description: "Make the task recurring. Omit for a one-off task.",
+      properties: {
+        unit: { type: "string", enum: ["days", "weeks", "months"], description: "Recurrence unit" },
+        cycle: { type: "number", description: "Every N units. Default 1. Example: cycle=2 + unit=weeks = biweekly." },
+        days: {
+          type: "array", items: { type: "number", minimum: 0, maximum: 6 },
+          description: "For unit=weeks: which days of the week (0=Sun, 1=Mon, ..., 6=Sat). Example: [1,2,3,4,5] = weekdays. Omit for the deadline's weekday only.",
+        },
+      },
+      required: ["unit"],
+    },
+  },
+  required: ["name"],
+};
+
 export const WRITE_TOOL_DEFINITIONS = [
+  {
+    name: "create_task",
+    title: "Create a task",
+    description: "Create a new task in Focus To-Do, optionally with a deadline, priority, project and recurrence. Changes sync to the Focus To-Do cloud. The user confirms each write in a form; clients without confirmation forms cannot write.",
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    inputSchema: createTaskSchema,
+  },
   {
     name: "complete_tasks",
     title: "Complete tasks",
@@ -110,8 +143,64 @@ function formatResults({ doneLabel, results, pendingSync, uiRefreshed, warning, 
   return out.join("\n");
 }
 
+function endOfDay(dateStr) {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Date(y, m - 1, d, 23, 59, 59, 999).getTime();
+}
+
+function buildTaskFields(args) {
+  const fields = { name: args.name };
+  if (args.project_id) fields.projectId = args.project_id;
+  if (args.priority != null) fields.priority = args.priority;
+  if (args.notes) fields.remark = args.notes;
+  if (args.estimated_pomos) fields.estimatePomoNum = args.estimated_pomos;
+  if (args.deadline) fields.deadline = endOfDay(args.deadline);
+  if (args.recurrence) {
+    const r = args.recurrence;
+    fields.rCycle = r.cycle ?? 1;
+    fields.rUnit = r.unit;
+    fields.rValue = r.unit === "weeks" && r.days ? r.days.join(",") : "";
+    fields.rFirstDeadline = fields.deadline || endOfDay(new Date().toLocaleDateString("en-CA"));
+    if (!fields.deadline) fields.deadline = fields.rFirstDeadline;
+  }
+  return fields;
+}
+
+function describeCreate(args, projects) {
+  const parts = [args.name];
+  if (args.project_id) parts.push(`in ${projectName(projects, args.project_id)}`);
+  if (args.priority) parts.push(`priority ${["none", "low", "medium", "high"][args.priority]}`);
+  if (args.deadline) parts.push(`deadline ${args.deadline}`);
+  if (args.recurrence) {
+    const r = args.recurrence;
+    const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const cycle = r.cycle && r.cycle > 1 ? `every ${r.cycle} ${r.unit}` : `every ${r.unit.replace(/s$/, "")}`;
+    const days = r.unit === "weeks" && r.days ? ` on ${r.days.map(d => dayNames[d]).join("/")}` : "";
+    parts.push(`recurring ${cycle}${days}`);
+  }
+  return parts.join(" · ");
+}
+
 export function createWriteHandlers({ getData, invalidate, writer, confirm }) {
   const describe = (t, projects) => `${t.name} · ${projectName(projects, t.projectId)} · ${ts(t.deadline) ?? "no deadline"}`;
+
+  async function runCreate(args) {
+    if (!args.name || !args.name.trim()) throw new Error("name is required");
+    const { projects } = getData();
+    if (args.project_id && !projects.has(args.project_id)) throw new Error(`Project not found: ${args.project_id}`);
+
+    const summary = describeCreate(args, projects);
+    const decision = await confirm({ message: `Create task in Focus To-Do?\n- ${summary}` });
+    if (decision === "declined") return "Cancelled; nothing was created.";
+    if (decision === "unavailable") return `Writes need a client with confirmation forms (MCP elicitation, e.g. Claude Code); nothing was created. Would create:\n- ${summary}`;
+
+    const fields = buildTaskFields(args);
+    try {
+      return await writer.createTask(fields);
+    } finally {
+      invalidate();
+    }
+  }
 
   async function run({ verb, doneLabel, args, validate, execute }) {
     const ids = normalizeIds(args.task_ids);
@@ -140,6 +229,7 @@ export function createWriteHandlers({ getData, invalidate, writer, confirm }) {
   }
 
   return {
+    create_task: args => runCreate(args),
     complete_tasks: args => run({ verb: "Complete", doneLabel: "Completed", args, validate: validateComplete, execute: (ids, valid) => writer.completeTasks(ids, { successorOf: Object.fromEntries(valid.filter(v => v.successor).map(v => [v.task.id, v.successor.id])) }) }),
     skip_occurrences: args => run({ verb: "Skip the current occurrence of", doneLabel: "Skipped", args, validate: validateSkip, execute: ids => writer.skipOccurrences(ids) }),
     remove_duplicate_tasks: args => run({ verb: "Delete duplicate", doneLabel: "Removed", args, validate: validateRemoveDuplicates, execute: (ids, valid) => writer.deleteTasks(ids, { keepOf: Object.fromEntries(valid.map(v => [v.task.id, v.keep.id])) }) }),

@@ -174,5 +174,37 @@ export function createWriter({ openSession }) {
         session.close();
       }
     }),
+    createProject: ({ name, color, isTag = false }) => serialized(async () => {
+      const session = await openSession();
+      try {
+        const result = await session.evaluate(`(async () => {
+          const ps = window.__focusTodoMcp && window.__focusTodoMcp.projectService;
+          if (!ps) throw new Error("focus-todo-mcp: projectService not located");
+          const fields = {
+            name: ${JSON.stringify(name)},
+            type: ${isTag ? 3000 : 1000},
+          };
+          if (${JSON.stringify(color || "")}) {
+            fields.color = ${JSON.stringify((color || "").replace(/^#/, ""))};
+          }
+          const project = await ps.addProject(fields);
+          return project == null ? null : JSON.parse(JSON.stringify(project));
+        })()`);
+        const id = result?.id;
+        let uiRefreshed = false, warning;
+        try {
+          uiRefreshed = await session.refreshIfIdle();
+        } catch (err) {
+          warning = `Project created, but window refresh failed: ${err.message}`;
+        }
+        const kind = isTag ? "tag" : "project";
+        const out = [`Created ${kind}: "${name}" (${id || "unknown id"})`];
+        if (warning) out.push(warning);
+        if (!uiRefreshed) out.push("The Focus To-Do window was not reloaded (a pomodoro is running or its state is unknown); it shows the new item on its next refresh.");
+        return out.join("\n");
+      } finally {
+        session.close();
+      }
+    }),
   };
 }

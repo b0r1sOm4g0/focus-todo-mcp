@@ -80,6 +80,16 @@ const updateSubtaskSchema = {
   required: ["id"],
 };
 
+const createProjectSchema = {
+  type: "object",
+  properties: {
+    name: { type: "string", description: "Project or tag name (required)" },
+    is_tag: { type: "boolean", description: "Set to true to create a tag (type 3000), false for a regular project list (default false)" },
+    color: { type: "string", description: "Color hex code (e.g. '3673ff' or '#3673ff'). Optional." },
+  },
+  required: ["name"],
+};
+
 export const WRITE_TOOL_DEFINITIONS = [
   {
     name: "create_task",
@@ -94,6 +104,13 @@ export const WRITE_TOOL_DEFINITIONS = [
     description: "Update fields of an existing task (name, project, priority, deadline, notes, or estimated pomodoros). Changes sync to the Focus To-Do cloud. The user confirms each write in a form; clients without confirmation forms cannot write.",
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputSchema: updateTaskSchema,
+  },
+  {
+    name: "create_project",
+    title: "Create a project or tag",
+    description: "Create a new project list or tag in Focus To-Do. Changes sync to the Focus To-Do cloud. The user confirms each write in a form; clients without confirmation forms cannot write.",
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    inputSchema: createProjectSchema,
   },
   {
     name: "create_subtask",
@@ -301,6 +318,22 @@ function validateUpdateSubtaskArgs(raw) {
     args.updates.estimatedPomoNum = n;
   }
   return args;
+}
+
+function validateCreateProjectArgs(raw) {
+  if (!raw || typeof raw !== "object") throw new Error("Arguments must be an object");
+  if (!raw.name || typeof raw.name !== "string" || !raw.name.trim()) throw new Error("name is required");
+  const clean = raw.name.replace(/[\x00-\x1f\x7f]/g, "").trim();
+  if (!clean) throw new Error("name cannot be empty");
+  const isTag = Boolean(raw.is_tag);
+  let color = undefined;
+  if (raw.color !== undefined && raw.color !== null && raw.color !== "") {
+    if (typeof raw.color !== "string") throw new Error("color must be a string");
+    const hex = raw.color.trim().replace(/^#/, "");
+    if (!/^[0-9a-fA-F]{6}$/.test(hex)) throw new Error(`Invalid color hex: "${raw.color}" (expected 6-character hex, e.g. "3673ff")`);
+    color = hex;
+  }
+  return { name: clean.slice(0, 255), isTag, color };
 }
 
 function formatResults({ doneLabel, results, pendingSync, uiRefreshed, warning, notes }) {
@@ -515,6 +548,25 @@ export function createWriteHandlers({ getData, invalidate, writer, confirm }) {
     }
   }
 
+  async function runCreateProject(rawArgs) {
+    const args = validateCreateProjectArgs(rawArgs);
+    const { projects } = getData();
+    const existing = [...projects.values()].find(p => p.state !== -1 && p.name?.toLowerCase() === args.name.toLowerCase() && (args.isTag ? p.type === 3000 : p.type !== 3000));
+    if (existing) throw new Error(`A ${args.isTag ? "tag" : "project"} named "${args.name}" already exists (${existing.id})`);
+
+    const kind = args.isTag ? "tag" : "project list";
+    const summary = `Create ${kind} "${args.name}"${args.color ? ` (color #${args.color})` : ""}`;
+    const decision = await confirm({ message: `Create ${kind} in Focus To-Do?\n- ${summary}` });
+    if (decision === "declined") return "Cancelled; nothing was created.";
+    if (decision === "unavailable") return `Writes need a client with confirmation forms (MCP elicitation, e.g. Claude Code); nothing was created. Would create:\n- ${summary}`;
+
+    try {
+      return await writer.createProject(args);
+    } finally {
+      invalidate();
+    }
+  }
+
   async function run({ verb, doneLabel, args, validate, execute }) {
     const ids = normalizeIds(args.task_ids);
     const { projects, tasks } = getData();
@@ -546,6 +598,7 @@ export function createWriteHandlers({ getData, invalidate, writer, confirm }) {
     update_task: args => runUpdate(args),
     create_subtask: args => runCreateSubtask(args),
     update_subtask: args => runUpdateSubtask(args),
+    create_project: args => runCreateProject(args),
     delete_tasks: args => run({ verb: "Delete", doneLabel: "Deleted", args, validate: validateDelete, execute: ids => writer.deleteTasks(ids, { allowFinished: true }) }),
     complete_tasks: args => run({ verb: "Complete", doneLabel: "Completed", args, validate: validateComplete, execute: (ids, valid) => writer.completeTasks(ids, { successorOf: Object.fromEntries(valid.filter(v => v.successor).map(v => [v.task.id, v.successor.id])) }) }),
     uncomplete_tasks: args => run({ verb: "Reopen", doneLabel: "Reopened", args, validate: validateUncomplete, execute: ids => writer.uncompleteTasks(ids) }),

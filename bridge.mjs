@@ -9,6 +9,7 @@ const SERVICES_LOST = "focus-todo-mcp: services not located";
 const SHAPES = {
   taskService: ["completeTask", "uncompleteTask", "deleteCurrentRepeatTask", "deleteTask", "fetchTaskById", "updateTaskInfo"],
   subtaskService: ["addSubtask", "updateSubtaskInfo", "deleteSubtask", "fetchSubtaskById"],
+  projectService: ["addProject", "updateProjectInfo", "deleteProject", "fetchProjectById"],
   synchronizer: ["syncNow", "sync", "updateProgressBar"],
 };
 const sleep = ms => new Promise(r => setTimeout(r, ms));

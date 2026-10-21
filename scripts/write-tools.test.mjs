@@ -28,6 +28,7 @@ function setup(tasks, { decision = "accepted", result, fail, subtasks = [] } = {
       updateTask: async (id, patch) => { calls.writer.push(["update", id, patch]); return `Updated task: ${id}`; },
       createSubtask: async args => { calls.writer.push(["create_subtask", args]); return `Created subtask: "${args.name}" (sub-1)`; },
       updateSubtask: async (id, u) => { calls.writer.push(["update_subtask", id, u]); return `Updated subtask: ${id}`; },
+      createProject: async args => { calls.writer.push(["create_project", args]); return `Created ${args.isTag ? "tag" : "project"}: "${args.name}" (proj-1)`; },
       completeTasks: respond("complete"),
       uncompleteTasks: respond("uncomplete"),
       skipOccurrences: respond("skip"),
@@ -42,6 +43,7 @@ test("write tools are annotated as in the spec", () => {
   const byName = Object.fromEntries(WRITE_TOOL_DEFINITIONS.map(d => [d.name, d.annotations]));
   assert.deepEqual(byName.create_task, { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true });
   assert.deepEqual(byName.update_task, { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true });
+  assert.deepEqual(byName.create_project, { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true });
   assert.deepEqual(byName.create_subtask, { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true });
   assert.deepEqual(byName.update_subtask, { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true });
   assert.deepEqual(byName.delete_tasks, { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true });
@@ -62,6 +64,8 @@ test("write tools are annotated as in the spec", () => {
   assert.ok(createSubDef.inputSchema.properties.task_id);
   const updateSubDef = WRITE_TOOL_DEFINITIONS.find(d => d.name === "update_subtask");
   assert.ok(updateSubDef.inputSchema.properties.id);
+  const createProjDef = WRITE_TOOL_DEFINITIONS.find(d => d.name === "create_project");
+  assert.ok(createProjDef.inputSchema.properties.name);
 });
 
 test("complete_tasks completes active tasks after confirmation", async () => {
@@ -354,4 +358,42 @@ test("update_subtask returns Nothing to update if no fields changed", async () =
 test("update_subtask rejects unknown subtask ID", async () => {
   const { h } = setup([], { subtasks: [] });
   await assert.rejects(h.update_subtask({ id: "nonexistent", name: "Test" }), /Subtask not found: nonexistent/);
+});
+
+test("create_project validates, confirms and calls writer for regular project", async () => {
+  const { h, calls } = setup([]);
+  const res = await h.create_project({ name: "Side Hustle", color: "3673ff" });
+  assert.equal(calls.writer.length, 1);
+  assert.equal(calls.writer[0][0], "create_project");
+  assert.deepEqual(calls.writer[0][1], { name: "Side Hustle", isTag: false, color: "3673ff" });
+  assert.match(res, /Created project: "Side Hustle"/);
+  assert.equal(calls.invalidated, 1);
+});
+
+test("create_project creates tag when is_tag is true", async () => {
+  const { h, calls } = setup([]);
+  const res = await h.create_project({ name: "urgent", is_tag: true, color: "#ff0000" });
+  assert.equal(calls.writer.length, 1);
+  assert.equal(calls.writer[0][0], "create_project");
+  assert.deepEqual(calls.writer[0][1], { name: "urgent", isTag: true, color: "ff0000" });
+  assert.match(res, /Created tag: "urgent"/);
+  assert.equal(calls.invalidated, 1);
+});
+
+test("create_project rejects duplicate project name", async () => {
+  const { h } = setup([]);
+  await assert.rejects(h.create_project({ name: "Project 1" }), /already exists/);
+});
+
+test("create_project rejects invalid hex color", async () => {
+  const { h } = setup([]);
+  await assert.rejects(h.create_project({ name: "New Proj", color: "not-a-color" }), /Invalid color hex/);
+});
+
+test("create_project respects declined confirmation", async () => {
+  const { h, calls } = setup([], { decision: "declined" });
+  const res = await h.create_project({ name: "Declined Proj" });
+  assert.equal(calls.writer.length, 0);
+  assert.match(res, /Cancelled; nothing was created/);
+  assert.equal(calls.invalidated, 0);
 });

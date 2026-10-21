@@ -73,6 +73,7 @@ export function createWriter({ openSession }) {
       id => (successorOf[id] ? "finishOnly" : "completeTask"),
       r => occurrence(r?.newTask),
       id => (successorOf[id] ? { successorId: successorOf[id] } : {}))),
+    uncompleteTasks: ids => serialized(() => run(ids, () => "uncompleteTask", () => undefined, () => ({ allowFinished: true }))),
     skipOccurrences: ids => serialized(() => run(ids, () => "deleteCurrentRepeatTask", r => occurrence(r), () => ({ recurring: true }))),
     deleteTasks: (ids, { keepOf = {}, allowFinished = false } = {}) => serialized(() => run(ids, () => "deleteTask", () => undefined, id => ({ ...(allowFinished ? { allowFinished: true } : {}), ...(keepOf[id] ? { keepId: keepOf[id] } : {}) }))),
     updateTask: (id, patch) => serialized(async () => {

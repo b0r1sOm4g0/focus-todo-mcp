@@ -88,6 +88,13 @@ export const WRITE_TOOL_DEFINITIONS = [
     inputSchema,
   },
   {
+    name: "uncomplete_tasks",
+    title: "Reopen completed tasks",
+    description: "Mark previously completed tasks as not completed (reopen tasks). Changes sync to the Focus To-Do cloud. The user confirms each write in a form; clients without confirmation forms cannot write.",
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    inputSchema,
+  },
+  {
     name: "skip_occurrences",
     title: "Skip recurring occurrences",
     description: "Skip the current occurrence of recurring tasks: the next occurrence is created and the current one is deleted without counting as completed. Changes sync to the Focus To-Do cloud. The user confirms each write in a form; clients without confirmation forms cannot write.",
@@ -122,6 +129,18 @@ function validateComplete(ids, tasks) {
       const successor = findSuccessor(t, all);
       valid.push(successor ? { task: t, successor, warn: `next occurrence already exists: ${ts(successor.deadline)}` } : { task: t });
     }
+  }
+  return { valid, skipped, rejected };
+}
+
+function validateUncomplete(ids, tasks) {
+  const valid = [], skipped = [], rejected = [];
+  for (const id of ids) {
+    const t = tasks.get(id);
+    if (!t) rejected.push({ id, reason: "task not found" });
+    else if (t.state === -1) rejected.push({ id, reason: "task is deleted" });
+    else if (!t.isFinished) skipped.push({ id, reason: "already active (not completed)" });
+    else valid.push({ task: t });
   }
   return { valid, skipped, rejected };
 }
@@ -405,6 +424,7 @@ export function createWriteHandlers({ getData, invalidate, writer, confirm }) {
     update_task: args => runUpdate(args),
     delete_tasks: args => run({ verb: "Delete", doneLabel: "Deleted", args, validate: validateDelete, execute: ids => writer.deleteTasks(ids, { allowFinished: true }) }),
     complete_tasks: args => run({ verb: "Complete", doneLabel: "Completed", args, validate: validateComplete, execute: (ids, valid) => writer.completeTasks(ids, { successorOf: Object.fromEntries(valid.filter(v => v.successor).map(v => [v.task.id, v.successor.id])) }) }),
+    uncomplete_tasks: args => run({ verb: "Reopen", doneLabel: "Reopened", args, validate: validateUncomplete, execute: ids => writer.uncompleteTasks(ids) }),
     skip_occurrences: args => run({ verb: "Skip the current occurrence of", doneLabel: "Skipped", args, validate: validateSkip, execute: ids => writer.skipOccurrences(ids) }),
     remove_duplicate_tasks: args => run({ verb: "Delete duplicate", doneLabel: "Removed", args, validate: validateRemoveDuplicates, execute: (ids, valid) => writer.deleteTasks(ids, { keepOf: Object.fromEntries(valid.map(v => [v.task.id, v.keep.id])) }) }),
   };

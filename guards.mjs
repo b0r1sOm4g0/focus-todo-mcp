@@ -29,6 +29,9 @@ export function appliedProblem(method, after, patch) {
     }
     return null;
   }
+  if (method === "uncompleteTask") {
+    return after && !after.isFinished ? null : `the app did not apply ${method}`;
+  }
   const applied = method === "completeTask" || method === "finishOnly" ? !!after?.isFinished : after?.state === -1;
   return applied ? null : `the app did not apply ${method}`;
 }

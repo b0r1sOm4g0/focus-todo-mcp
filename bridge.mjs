@@ -7,7 +7,7 @@ import { liveTaskProblem, appliedProblem } from "./guards.mjs";
 const GROUP = "focus-todo-mcp";
 const SERVICES_LOST = "focus-todo-mcp: services not located";
 const SHAPES = {
-  taskService: ["completeTask", "deleteCurrentRepeatTask", "deleteTask", "fetchTaskById", "updateTaskInfo"],
+  taskService: ["completeTask", "uncompleteTask", "deleteCurrentRepeatTask", "deleteTask", "fetchTaskById", "updateTaskInfo"],
   synchronizer: ["syncNow", "sync", "updateProgressBar"],
 };
 const sleep = ms => new Promise(r => setTimeout(r, ms));

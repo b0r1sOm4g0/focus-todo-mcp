@@ -30,6 +30,14 @@ test("completeTasks calls completeTask per id and reports next occurrences", asy
   assert.equal(out.uiRefreshed, true);
 });
 
+test("uncompleteTasks calls uncompleteTask with allowFinished guard", async () => {
+  const s = fakeSession({ replies: { a: { id: "a", isFinished: false } } });
+  const out = await createWriter({ openSession: async () => s }).uncompleteTasks(["a"]);
+  assert.equal(s.log[0][1], "uncompleteTask");
+  assert.deepEqual(s.log[0][3], { allowFinished: true });
+  assert.deepEqual(out.results, [{ id: "a", ok: true }]);
+});
+
 test("skipOccurrences uses deleteCurrentRepeatTask and its returned task", async () => {
   const s = fakeSession({ replies: { r: { id: "n2", deadline: 9 } } });
   const out = await createWriter({ openSession: async () => s }).skipOccurrences(["r"]);

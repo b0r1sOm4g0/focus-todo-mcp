@@ -26,6 +26,7 @@ function setup(tasks, { decision = "accepted", result, fail } = {}) {
       createTask: async fields => { calls.writer.push(["create", fields]); return `Created task: ${fields.name} (task-id)`; },
       updateTask: async (id, patch) => { calls.writer.push(["update", id, patch]); return `Updated task: ${id}`; },
       completeTasks: respond("complete"),
+      uncompleteTasks: respond("uncomplete"),
       skipOccurrences: respond("skip"),
       deleteTasks: respond("delete"),
     },
@@ -40,9 +41,10 @@ test("write tools are annotated as in the spec", () => {
   assert.deepEqual(byName.update_task, { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true });
   assert.deepEqual(byName.delete_tasks, { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true });
   assert.deepEqual(byName.complete_tasks, { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true });
+  assert.deepEqual(byName.uncomplete_tasks, { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true });
   assert.deepEqual(byName.skip_occurrences, { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true });
   assert.deepEqual(byName.remove_duplicate_tasks, { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true });
-  const batchTools = WRITE_TOOL_DEFINITIONS.filter(d => d.name === "complete_tasks" || d.name === "skip_occurrences" || d.name === "remove_duplicate_tasks" || d.name === "delete_tasks");
+  const batchTools = WRITE_TOOL_DEFINITIONS.filter(d => ["complete_tasks", "uncomplete_tasks", "skip_occurrences", "remove_duplicate_tasks", "delete_tasks"].includes(d.name));
   for (const d of batchTools) {
     assert.equal(d.inputSchema.properties.task_ids.maxItems, 50);
     assert.deepEqual(Object.keys(d.inputSchema.properties), ["task_ids"]);
@@ -287,4 +289,22 @@ test("update_task respects declined confirmation", async () => {
   assert.equal(calls.writer.length, 0);
   assert.match(res, /Cancelled; nothing was changed/);
   assert.equal(calls.invalidated, 0);
+});
+
+test("uncomplete_tasks reopens completed tasks after confirmation", async () => {
+  const { h, calls } = setup([{ id: "done", isFinished: true }]);
+  const text = await h.uncomplete_tasks({ task_ids: ["done"] });
+  assert.deepEqual(calls.writer[0], ["uncomplete", ["done"]]);
+  assert.match(text, /Reopened 1\/1/);
+  assert.equal(calls.invalidated, 1);
+});
+
+test("uncomplete_tasks skips active tasks and rejects deleted tasks", async () => {
+  const { h, calls } = setup([{ id: "active", isFinished: false }, { id: "del", isFinished: true, state: -1 }]);
+  const text = await h.uncomplete_tasks({ task_ids: ["active", "del", "unknown"] });
+  assert.equal(calls.writer.length, 0);
+  assert.match(text, /Nothing to do/);
+  assert.match(text, /active: already active/);
+  assert.match(text, /del: task is deleted/);
+  assert.match(text, /unknown: task not found/);
 });

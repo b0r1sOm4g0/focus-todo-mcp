@@ -84,6 +84,7 @@ Environment variables: `FOCUS_TODO_USER_DATA_DIR` (default `~/.config/focustodo-
 | `update_task` | Update fields of an existing task (name, project, priority, deadline, notes, estimated pomodoros) |
 | `delete_tasks` | Soft-delete one or more tasks (`state: -1`) |
 | `complete_tasks` | Complete tasks; recurring tasks get their next occurrence unless the series already has one |
+| `uncomplete_tasks` | Reopen previously completed tasks (`isFinished: false`) |
 | `skip_occurrences` | Skip the current occurrence of recurring tasks without counting it as done |
 | `remove_duplicate_tasks` | Delete extra copies found by `find_duplicate_tasks`; the kept copy is never deleted |
 Every write is confirmed by you in a form (MCP elicitation, supported by Claude Code). Clients without confirmation forms can read but cannot write, so approval never rests with the model. Changes sync to the Focus To-Do cloud through the app itself.

@@ -1,7 +1,12 @@
-# focus-todo-mcp
+# ⏱️ Focus To-Do MCP Server
 
-MCP server that reads your [Focus To-Do](https://www.focustodo.cn/) data directly from your local database (Windows app or Chrome Extension on Linux/Pop!_OS/macOS) — no account login, no API key, no export needed.
+[![MCP Protocol](https://img.shields.io/badge/MCP-Protocol-blue.svg)](https://modelcontextprotocol.io)
+[![Official Skill](https://img.shields.io/badge/Official%20Skill-Focus%20OS%20($19)-orange.svg)](https://wisetools.gumroad.com/l/focus-os-sprint-planner)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 
+> 🧠 **Supercharge with Focus OS:** Take this MCP server beyond raw database access. Transform Claude, Cursor, and AI agents into your autonomous Chief of Staff with the official **[Focus OS — Autonomous Sprint & Pomodoro Planner Skill](https://wisetools.gumroad.com/l/focus-os-sprint-planner)** by Wise Tools (Eisenhower prioritization, 8-pomodoro daily budgets, and automated backlog grooming).
+
+MCP server that connects your local [Focus To-Do](https://www.focustodo.cn/) database (Windows app or Chrome Extension on Linux/macOS) directly to Claude, Cursor, and MCP clients — no account login, no API key, no export needed.
 ## What it does
 
 Exposes your Focus To-Do tasks, projects, subtasks and Pomodoro sessions to Claude (or any MCP-compatible client) by parsing the app's IndexedDB (Chrome LevelDB format) stored locally.
@@ -115,7 +120,11 @@ For writes, it connects to the dedicated Chrome instance over the DevTools Proto
 - Reads open database files in read-only mode. Writes happen only through the write tools, inside the Focus To-Do app, after your confirmation.
 - Data is read directly from disk, reflecting the last state flushed by Chrome/Focus To-Do.
 
+## 🏛️ Ecosystem & Commercial Skills
+
+Maintained with ❤️ by **Wise Tools**.  
+Explore our production-grade MCP skills and automation toolkits at **[wisetools.gumroad.com](https://wisetools.gumroad.com)**.
+
 ## License
 
 MIT
-

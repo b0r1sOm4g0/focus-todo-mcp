@@ -74,6 +74,26 @@ export function createWriter({ openSession }) {
       r => occurrence(r?.newTask),
       id => (successorOf[id] ? { successorId: successorOf[id] } : {}))),
     skipOccurrences: ids => serialized(() => run(ids, () => "deleteCurrentRepeatTask", r => occurrence(r), () => ({ recurring: true }))),
-    deleteTasks: (ids, { keepOf = {} } = {}) => serialized(() => run(ids, () => "deleteTask", () => undefined, id => (keepOf[id] ? { keepId: keepOf[id] } : {}))),
+    deleteTasks: (ids, { keepOf = {}, allowFinished = false } = {}) => serialized(() => run(ids, () => "deleteTask", () => undefined, id => ({ ...(allowFinished ? { allowFinished: true } : {}), ...(keepOf[id] ? { keepId: keepOf[id] } : {}) }))),
+    updateTask: (id, patch) => serialized(async () => {
+      const session = await openSession();
+      try {
+        const updated = await session.call("updateTaskInfo", id, { allowFinished: true, patch });
+        let pendingSync = [id], uiRefreshed = false, warning;
+        try {
+          pendingSync = await session.syncAndWait([id]);
+          uiRefreshed = await session.refreshIfIdle();
+        } catch (err) {
+          warning = `The changes were applied, but confirming the sync or refreshing the window failed: ${err.message}`;
+        }
+        const out = [`Updated task: ${updated?.name || id}`];
+        if (warning) out.push(warning);
+        if (pendingSync.length) out.push(`Saved locally but not yet confirmed by the sync server: ${pendingSync.join(", ")}.`);
+        if (!uiRefreshed) out.push("The Focus To-Do window was not reloaded (a pomodoro is running or its state is unknown); it shows the update on its next refresh.");
+        return out.join("\n");
+      } finally {
+        session.close();
+      }
+    }),
   };
 }

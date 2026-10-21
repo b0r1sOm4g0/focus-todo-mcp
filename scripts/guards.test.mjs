@@ -37,6 +37,8 @@ test("the change must be visible after the app call", () => {
   assert.equal(appliedProblem("deleteTask", live({ state: -1 })), null);
   assert.equal(appliedProblem("deleteCurrentRepeatTask", live({ state: -1 })), null);
   assert.match(appliedProblem("deleteTask", live()), /did not apply/);
+  assert.equal(appliedProblem("updateTaskInfo", live({ name: "New" }), { name: "New" }), null);
+  assert.match(appliedProblem("updateTaskInfo", live({ name: "Old" }), { name: "New" }), /did not update/);
 });
 
 test("guards are self-contained so they can run inside the page", () => {

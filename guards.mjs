@@ -19,7 +19,16 @@ export function liveTaskProblem(task, guard, keep, successor) {
 }
 
 // Why the app call did not take effect, or null when the record shows the change
-export function appliedProblem(method, after) {
+export function appliedProblem(method, after, patch) {
+  if (method === "updateTaskInfo") {
+    if (!after) return "task no longer exists";
+    if (patch) {
+      for (const [k, v] of Object.entries(patch)) {
+        if (after[k] !== v) return `field ${k} did not update (expected ${v}, got ${after[k]})`;
+      }
+    }
+    return null;
+  }
   const applied = method === "completeTask" || method === "finishOnly" ? !!after?.isFinished : after?.state === -1;
   return applied ? null : `the app did not apply ${method}`;
 }

@@ -67,22 +67,25 @@ Environment variables: `FOCUS_TODO_USER_DATA_DIR` (default `~/.config/focustodo-
 
 | Tool | Description |
 |------|-------------|
-| `list_projects` | List all projects (hides system projects by default) |
+| `list_projects` | List all projects and tags (hides system projects by default, includes `isTag` indicator) |
 | `list_tasks` | List tasks filtered by project and status (`active`/`overdue`/`completed`/`all`, using the app's rules) |
-| `search_tasks` | Search tasks by name |
-| `get_task` | Get full task details including subtasks |
+| `search_tasks` | Search tasks by name, notes (remark), or tag names |
+| `get_task` | Get full task details including subtasks, total focus time, and recent pomodoros |
 | `list_subtasks` | List subtasks for a task |
 | `get_pomodoro_stats` | Pomodoro statistics by day for the last N days |
+| `get_today_focus` | Daily overview: today's focus time, pomodoros completed (with task breakdown), due today, and overdue |
 | `find_duplicate_tasks` | Find duplicate occurrences of recurring tasks (same series, same day) |
 
 ### Write tools (require the dedicated Chrome instance)
 
 | Tool | Description |
 |------|-------------|
+| `create_task` | Create a new task, optionally with deadline, priority, project, notes, and recurrence |
+| `update_task` | Update fields of an existing task (name, project, priority, deadline, notes, estimated pomodoros) |
+| `delete_tasks` | Soft-delete one or more tasks (`state: -1`) |
 | `complete_tasks` | Complete tasks; recurring tasks get their next occurrence unless the series already has one |
 | `skip_occurrences` | Skip the current occurrence of recurring tasks without counting it as done |
 | `remove_duplicate_tasks` | Delete extra copies found by `find_duplicate_tasks`; the kept copy is never deleted |
-
 Every write is confirmed by you in a form (MCP elicitation, supported by Claude Code). Clients without confirmation forms can read but cannot write, so approval never rests with the model. Changes sync to the Focus To-Do cloud through the app itself.
 
 ## How it works

@@ -129,11 +129,15 @@ function callService(cdp, method, id, guard = {}) {
     const before = liveTaskProblem(task, guard, keep, successor);
     if (before) throw new Error(before);
     // finishOnly: the fields the app's completeTask sets, without generating the next occurrence
-    const r = method === "finishOnly"
-      ? await s.updateTaskInfo(id, { isFinished: true, finishedDate: Date.now(), rCycle: 0, rUnit: "", rValue: "", rFirstDeadline: 0 })
-      : await s[method](id);
-    const after = appliedProblem(method, await s.fetchTaskById(id));
-    if (after) throw new Error(after);
+    let r;
+    if (method === "finishOnly") {
+      r = await s.updateTaskInfo(id, { isFinished: true, finishedDate: Date.now(), rCycle: 0, rUnit: "", rValue: "", rFirstDeadline: 0 });
+    } else if (method === "updateTaskInfo") {
+      r = await s.updateTaskInfo(id, guard.patch);
+    } else {
+      r = await s[method](id);
+    }
+    const after = appliedProblem(method, await s.fetchTaskById(id), guard.patch);
     return r == null ? null : JSON.parse(JSON.stringify(r));
   })()`);
 }

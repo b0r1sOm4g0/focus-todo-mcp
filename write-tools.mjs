@@ -44,6 +44,20 @@ const createTaskSchema = {
   required: ["name"],
 };
 
+const updateTaskSchema = {
+  type: "object",
+  properties: {
+    id: { type: "string", description: "Task ID to update (required)" },
+    name: { type: "string", description: "New task name" },
+    project_id: { type: "string", description: "New project ID (from list_projects)" },
+    priority: { type: "number", enum: [0, 1, 2, 3], description: "New priority: 0 = none, 1 = low, 2 = medium, 3 = high" },
+    deadline: { type: "string", description: "New deadline date as YYYY-MM-DD (pass empty string \"\" to remove deadline)" },
+    notes: { type: "string", description: "New notes/remark (pass empty string \"\" to clear)" },
+    estimated_pomos: { type: "number", description: "New estimated number of pomodoros" },
+  },
+  required: ["id"],
+};
+
 export const WRITE_TOOL_DEFINITIONS = [
   {
     name: "create_task",
@@ -51,6 +65,20 @@ export const WRITE_TOOL_DEFINITIONS = [
     description: "Create a new task in Focus To-Do, optionally with a deadline, priority, project and recurrence. Changes sync to the Focus To-Do cloud. The user confirms each write in a form; clients without confirmation forms cannot write.",
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     inputSchema: createTaskSchema,
+  },
+  {
+    name: "update_task",
+    title: "Update a task",
+    description: "Update fields of an existing task (name, project, priority, deadline, notes, or estimated pomodoros). Changes sync to the Focus To-Do cloud. The user confirms each write in a form; clients without confirmation forms cannot write.",
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    inputSchema: updateTaskSchema,
+  },
+  {
+    name: "delete_tasks",
+    title: "Delete tasks",
+    description: "Delete one or more tasks from Focus To-Do (soft delete, state = -1). Changes sync to the Focus To-Do cloud. The user confirms each write in a form; clients without confirmation forms cannot write.",
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+    inputSchema,
   },
   {
     name: "complete_tasks",
@@ -128,6 +156,59 @@ function validateRemoveDuplicates(ids, tasks) {
     else rejected.push({ id, reason: "task is not a duplicate" });
   }
   return { valid, skipped: [], rejected };
+}
+
+function validateDelete(ids, tasks) {
+  const valid = [], skipped = [], rejected = [];
+  for (const id of ids) {
+    const t = tasks.get(id);
+    if (!t) rejected.push({ id, reason: "task not found" });
+    else if (t.state === -1) skipped.push({ id, reason: "already deleted" });
+    else valid.push({ task: t });
+  }
+  return { valid, skipped, rejected };
+}
+
+function validateUpdateArgs(raw) {
+  if (!raw || typeof raw !== "object") throw new Error("Arguments must be an object");
+  if (!raw.id || typeof raw.id !== "string" || !raw.id.trim()) throw new Error("id is required");
+  const args = { id: raw.id.trim() };
+  if (raw.name !== undefined) {
+    if (typeof raw.name !== "string") throw new Error("name must be a string");
+    const clean = raw.name.replace(/[\x00-\x1f\x7f]/g, "").trim();
+    if (!clean) throw new Error("name cannot be empty");
+    args.name = clean.slice(0, 255);
+  }
+  if (raw.project_id !== undefined) {
+    if (typeof raw.project_id !== "string") throw new Error("project_id must be a string");
+    args.project_id = raw.project_id.trim();
+  }
+  if (raw.priority !== undefined) {
+    const p = Number(raw.priority);
+    if (![0, 1, 2, 3].includes(p)) throw new Error("priority must be 0, 1, 2, or 3");
+    args.priority = p;
+  }
+  if (raw.deadline !== undefined) {
+    if (typeof raw.deadline !== "string") throw new Error("deadline must be a string (YYYY-MM-DD or empty to clear)");
+    const trimmed = raw.deadline.trim();
+    if (trimmed === "") {
+      args.deadline = "";
+    } else {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) throw new Error(`Invalid date format: ${trimmed} (expected YYYY-MM-DD)`);
+      endOfDay(trimmed);
+      args.deadline = trimmed;
+    }
+  }
+  if (raw.notes !== undefined) {
+    if (typeof raw.notes !== "string") throw new Error("notes must be a string");
+    args.notes = raw.notes.slice(0, 4000);
+  }
+  if (raw.estimated_pomos !== undefined) {
+    const n = Number(raw.estimated_pomos);
+    if (!Number.isInteger(n) || n < 0 || n > 100) throw new Error("estimated_pomos must be an integer between 0 and 100");
+    args.estimated_pomos = n;
+  }
+  return args;
 }
 
 function formatResults({ doneLabel, results, pendingSync, uiRefreshed, warning, notes }) {
@@ -241,6 +322,58 @@ export function createWriteHandlers({ getData, invalidate, writer, confirm }) {
     }
   }
 
+  async function runUpdate(rawArgs) {
+    const args = validateUpdateArgs(rawArgs);
+    const { projects, tasks } = getData();
+    const task = tasks.get(args.id);
+    if (!task) throw new Error(`Task not found: ${args.id}`);
+    if (task.state === -1) throw new Error(`Task ${args.id} is deleted`);
+    if (args.project_id && !projects.has(args.project_id)) throw new Error(`Project not found: ${args.project_id}`);
+
+    const patch = {};
+    const changes = [];
+    if (args.name !== undefined && args.name !== task.name) {
+      patch.name = args.name;
+      changes.push(`name: "${args.name}"`);
+    }
+    if (args.project_id !== undefined && args.project_id !== task.projectId) {
+      patch.projectId = args.project_id;
+      changes.push(`project: ${projectName(projects, args.project_id)}`);
+    }
+    if (args.priority !== undefined && args.priority !== task.priority) {
+      patch.priority = args.priority;
+      changes.push(`priority: ${args.priority}`);
+    }
+    if (args.deadline !== undefined) {
+      const newDl = args.deadline ? endOfDay(args.deadline) : 0;
+      if (newDl !== (task.deadline ?? 0)) {
+        patch.deadline = newDl;
+        changes.push(`deadline: ${args.deadline ? args.deadline : "none"}`);
+      }
+    }
+    if (args.notes !== undefined && args.notes !== (task.remark ?? "")) {
+      patch.remark = args.notes;
+      changes.push(`notes: "${args.notes.length > 50 ? args.notes.slice(0, 47) + "…" : args.notes}"`);
+    }
+    if (args.estimated_pomos !== undefined && args.estimated_pomos !== (task.estimatePomoNum ?? 0)) {
+      patch.estimatePomoNum = args.estimated_pomos;
+      changes.push(`estimated pomodoros: ${args.estimated_pomos}`);
+    }
+
+    if (Object.keys(patch).length === 0) return `Nothing to update for task "${task.name}".`;
+
+    const summary = `${task.name} (${task.id}) → ${changes.join(", ")}`;
+    const decision = await confirm({ message: `Update task in Focus To-Do?\n- ${summary}` });
+    if (decision === "declined") return "Cancelled; nothing was changed.";
+    if (decision === "unavailable") return `Writes need a client with confirmation forms (MCP elicitation, e.g. Claude Code); nothing was changed. Would update:\n- ${summary}`;
+
+    try {
+      return await writer.updateTask(args.id, patch);
+    } finally {
+      invalidate();
+    }
+  }
+
   async function run({ verb, doneLabel, args, validate, execute }) {
     const ids = normalizeIds(args.task_ids);
     const { projects, tasks } = getData();
@@ -269,6 +402,8 @@ export function createWriteHandlers({ getData, invalidate, writer, confirm }) {
 
   return {
     create_task: args => runCreate(args),
+    update_task: args => runUpdate(args),
+    delete_tasks: args => run({ verb: "Delete", doneLabel: "Deleted", args, validate: validateDelete, execute: ids => writer.deleteTasks(ids, { allowFinished: true }) }),
     complete_tasks: args => run({ verb: "Complete", doneLabel: "Completed", args, validate: validateComplete, execute: (ids, valid) => writer.completeTasks(ids, { successorOf: Object.fromEntries(valid.filter(v => v.successor).map(v => [v.task.id, v.successor.id])) }) }),
     skip_occurrences: args => run({ verb: "Skip the current occurrence of", doneLabel: "Skipped", args, validate: validateSkip, execute: ids => writer.skipOccurrences(ids) }),
     remove_duplicate_tasks: args => run({ verb: "Delete duplicate", doneLabel: "Removed", args, validate: validateRemoveDuplicates, execute: (ids, valid) => writer.deleteTasks(ids, { keepOf: Object.fromEntries(valid.map(v => [v.task.id, v.keep.id])) }) }),

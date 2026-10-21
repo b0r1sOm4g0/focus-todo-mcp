@@ -58,6 +58,28 @@ const updateTaskSchema = {
   required: ["id"],
 };
 
+const createSubtaskSchema = {
+  type: "object",
+  properties: {
+    task_id: { type: "string", description: "Parent task ID (from list_tasks or search_tasks)" },
+    name: { type: "string", description: "Subtask name (required)" },
+    estimated_pomos: { type: "number", description: "Estimated number of pomodoros for this subtask (default 0)" },
+  },
+  required: ["task_id", "name"],
+};
+
+const updateSubtaskSchema = {
+  type: "object",
+  properties: {
+    id: { type: "string", description: "Subtask ID to update (from get_task or list_subtasks)" },
+    name: { type: "string", description: "New subtask name" },
+    is_finished: { type: "boolean", description: "true = mark completed, false = mark active" },
+    is_deleted: { type: "boolean", description: "true = delete subtask" },
+    estimated_pomos: { type: "number", description: "New estimated number of pomodoros" },
+  },
+  required: ["id"],
+};
+
 export const WRITE_TOOL_DEFINITIONS = [
   {
     name: "create_task",
@@ -72,6 +94,20 @@ export const WRITE_TOOL_DEFINITIONS = [
     description: "Update fields of an existing task (name, project, priority, deadline, notes, or estimated pomodoros). Changes sync to the Focus To-Do cloud. The user confirms each write in a form; clients without confirmation forms cannot write.",
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputSchema: updateTaskSchema,
+  },
+  {
+    name: "create_subtask",
+    title: "Create a subtask",
+    description: "Add a new subtask to an existing task. Changes sync to the Focus To-Do cloud. The user confirms each write in a form; clients without confirmation forms cannot write.",
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    inputSchema: createSubtaskSchema,
+  },
+  {
+    name: "update_subtask",
+    title: "Update a subtask",
+    description: "Update a subtask: change name, mark as completed/uncompleted, delete, or update estimated pomodoros. Changes sync to the Focus To-Do cloud. The user confirms each write in a form; clients without confirmation forms cannot write.",
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    inputSchema: updateSubtaskSchema,
   },
   {
     name: "delete_tasks",
@@ -226,6 +262,43 @@ function validateUpdateArgs(raw) {
     const n = Number(raw.estimated_pomos);
     if (!Number.isInteger(n) || n < 0 || n > 100) throw new Error("estimated_pomos must be an integer between 0 and 100");
     args.estimated_pomos = n;
+  }
+  return args;
+}
+
+function validateCreateSubtaskArgs(raw) {
+  if (!raw || typeof raw !== "object") throw new Error("Arguments must be an object");
+  if (!raw.task_id || typeof raw.task_id !== "string" || !raw.task_id.trim()) throw new Error("task_id is required");
+  if (!raw.name || typeof raw.name !== "string" || !raw.name.trim()) throw new Error("name is required");
+  const clean = raw.name.replace(/[\x00-\x1f\x7f]/g, "").trim();
+  if (!clean) throw new Error("name cannot be empty");
+  const n = raw.estimated_pomos !== undefined ? Number(raw.estimated_pomos) : 0;
+  if (!Number.isInteger(n) || n < 0 || n > 100) throw new Error("estimated_pomos must be an integer between 0 and 100");
+  return { taskId: raw.task_id.trim(), name: clean.slice(0, 255), estimatedPomoNum: n };
+}
+
+function validateUpdateSubtaskArgs(raw) {
+  if (!raw || typeof raw !== "object") throw new Error("Arguments must be an object");
+  if (!raw.id || typeof raw.id !== "string" || !raw.id.trim()) throw new Error("id is required");
+  const args = { id: raw.id.trim(), updates: {} };
+  if (raw.name !== undefined) {
+    if (typeof raw.name !== "string") throw new Error("name must be a string");
+    const clean = raw.name.replace(/[\x00-\x1f\x7f]/g, "").trim();
+    if (!clean) throw new Error("name cannot be empty");
+    args.updates.name = clean.slice(0, 255);
+  }
+  if (raw.is_finished !== undefined) {
+    if (typeof raw.is_finished !== "boolean") throw new Error("is_finished must be a boolean");
+    args.updates.isFinished = raw.is_finished;
+  }
+  if (raw.is_deleted !== undefined) {
+    if (typeof raw.is_deleted !== "boolean") throw new Error("is_deleted must be a boolean");
+    args.updates.isDeleted = raw.is_deleted;
+  }
+  if (raw.estimated_pomos !== undefined) {
+    const n = Number(raw.estimated_pomos);
+    if (!Number.isInteger(n) || n < 0 || n > 100) throw new Error("estimated_pomos must be an integer between 0 and 100");
+    args.updates.estimatedPomoNum = n;
   }
   return args;
 }
@@ -393,6 +466,55 @@ export function createWriteHandlers({ getData, invalidate, writer, confirm }) {
     }
   }
 
+  async function runCreateSubtask(rawArgs) {
+    const args = validateCreateSubtaskArgs(rawArgs);
+    const { tasks } = getData();
+    const parent = tasks.get(args.taskId);
+    if (!parent) throw new Error(`Parent task not found: ${args.taskId}`);
+    if (parent.state === -1) throw new Error(`Parent task ${args.taskId} is deleted`);
+
+    const summary = `Add subtask "${args.name}" to task "${parent.name}" (${parent.id})${args.estimatedPomoNum > 0 ? ` · ${args.estimatedPomoNum} pomodoros` : ""}`;
+    const decision = await confirm({ message: `Create subtask in Focus To-Do?\n- ${summary}` });
+    if (decision === "declined") return "Cancelled; nothing was created.";
+    if (decision === "unavailable") return `Writes need a client with confirmation forms (MCP elicitation, e.g. Claude Code); nothing was created. Would create:\n- ${summary}`;
+
+    try {
+      return await writer.createSubtask(args);
+    } finally {
+      invalidate();
+    }
+  }
+
+  async function runUpdateSubtask(rawArgs) {
+    const args = validateUpdateSubtaskArgs(rawArgs);
+    const { subtasks } = getData();
+    const subtask = subtasks ? subtasks.get(args.id) : undefined;
+    if (!subtask) throw new Error(`Subtask not found: ${args.id}`);
+    if (subtask.state === -1) throw new Error(`Subtask ${args.id} is already deleted`);
+
+    const changes = [];
+    const u = args.updates;
+    if (u.isDeleted) changes.push("delete subtask");
+    else {
+      if (u.name !== undefined && u.name !== subtask.name) changes.push(`name: "${u.name}"`);
+      if (u.isFinished !== undefined && u.isFinished !== subtask.isFinished) changes.push(u.isFinished ? "mark completed" : "reopen");
+      if (u.estimatedPomoNum !== undefined && u.estimatedPomoNum !== (subtask.estimatedPomoNum ?? 0)) changes.push(`estimated pomodoros: ${u.estimatedPomoNum}`);
+    }
+
+    if (changes.length === 0) return `Nothing to update for subtask "${subtask.name}".`;
+
+    const summary = `Subtask "${subtask.name}" (${subtask.id}) → ${changes.join(", ")}`;
+    const decision = await confirm({ message: `Update subtask in Focus To-Do?\n- ${summary}` });
+    if (decision === "declined") return "Cancelled; nothing was changed.";
+    if (decision === "unavailable") return `Writes need a client with confirmation forms (MCP elicitation, e.g. Claude Code); nothing was changed. Would update:\n- ${summary}`;
+
+    try {
+      return await writer.updateSubtask(args.id, args.updates);
+    } finally {
+      invalidate();
+    }
+  }
+
   async function run({ verb, doneLabel, args, validate, execute }) {
     const ids = normalizeIds(args.task_ids);
     const { projects, tasks } = getData();
@@ -422,6 +544,8 @@ export function createWriteHandlers({ getData, invalidate, writer, confirm }) {
   return {
     create_task: args => runCreate(args),
     update_task: args => runUpdate(args),
+    create_subtask: args => runCreateSubtask(args),
+    update_subtask: args => runUpdateSubtask(args),
     delete_tasks: args => run({ verb: "Delete", doneLabel: "Deleted", args, validate: validateDelete, execute: ids => writer.deleteTasks(ids, { allowFinished: true }) }),
     complete_tasks: args => run({ verb: "Complete", doneLabel: "Completed", args, validate: validateComplete, execute: (ids, valid) => writer.completeTasks(ids, { successorOf: Object.fromEntries(valid.filter(v => v.successor).map(v => [v.task.id, v.successor.id])) }) }),
     uncomplete_tasks: args => run({ verb: "Reopen", doneLabel: "Reopened", args, validate: validateUncomplete, execute: ids => writer.uncompleteTasks(ids) }),

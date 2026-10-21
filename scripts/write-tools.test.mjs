@@ -4,14 +4,15 @@ import { WRITE_TOOL_DEFINITIONS, createWriteHandlers } from "../write-tools.mjs"
 
 const TODAY = new Date(2026, 9, 13, 23, 59, 59).getTime();
 
-function data(tasks) {
+function data(tasks, subtasks = []) {
   return {
     projects: new Map([["P1", { id: "P1", name: "Project 1" }]]),
     tasks: new Map(tasks.map(t => [t.id, { name: t.id, projectId: "P1", state: 0, isFinished: false, rCycle: 0, rId: "", deadline: TODAY, creationDate: 1, ...t }])),
+    subtasks: new Map(subtasks.map(s => [s.id, { name: s.id, taskId: "t1", state: 0, isFinished: false, order: 0, estimatedPomoNum: 0, ...s }])),
   };
 }
 
-function setup(tasks, { decision = "accepted", result, fail } = {}) {
+function setup(tasks, { decision = "accepted", result, fail, subtasks = [] } = {}) {
   const calls = { writer: [], confirm: [], invalidated: 0, options: [] };
   const respond = method => async (ids, options) => {
     calls.writer.push([method, ids]);
@@ -20,11 +21,13 @@ function setup(tasks, { decision = "accepted", result, fail } = {}) {
     return result ?? { results: ids.map(id => ({ id, ok: true })), pendingSync: [], uiRefreshed: true };
   };
   const h = createWriteHandlers({
-    getData: () => data(tasks),
+    getData: () => data(tasks, subtasks),
     invalidate: () => { calls.invalidated++; },
     writer: {
       createTask: async fields => { calls.writer.push(["create", fields]); return `Created task: ${fields.name} (task-id)`; },
       updateTask: async (id, patch) => { calls.writer.push(["update", id, patch]); return `Updated task: ${id}`; },
+      createSubtask: async args => { calls.writer.push(["create_subtask", args]); return `Created subtask: "${args.name}" (sub-1)`; },
+      updateSubtask: async (id, u) => { calls.writer.push(["update_subtask", id, u]); return `Updated subtask: ${id}`; },
       completeTasks: respond("complete"),
       uncompleteTasks: respond("uncomplete"),
       skipOccurrences: respond("skip"),
@@ -39,6 +42,8 @@ test("write tools are annotated as in the spec", () => {
   const byName = Object.fromEntries(WRITE_TOOL_DEFINITIONS.map(d => [d.name, d.annotations]));
   assert.deepEqual(byName.create_task, { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true });
   assert.deepEqual(byName.update_task, { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true });
+  assert.deepEqual(byName.create_subtask, { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true });
+  assert.deepEqual(byName.update_subtask, { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true });
   assert.deepEqual(byName.delete_tasks, { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true });
   assert.deepEqual(byName.complete_tasks, { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true });
   assert.deepEqual(byName.uncomplete_tasks, { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true });
@@ -53,6 +58,10 @@ test("write tools are annotated as in the spec", () => {
   assert.ok(createDef.inputSchema.properties.name);
   const updateDef = WRITE_TOOL_DEFINITIONS.find(d => d.name === "update_task");
   assert.ok(updateDef.inputSchema.properties.id);
+  const createSubDef = WRITE_TOOL_DEFINITIONS.find(d => d.name === "create_subtask");
+  assert.ok(createSubDef.inputSchema.properties.task_id);
+  const updateSubDef = WRITE_TOOL_DEFINITIONS.find(d => d.name === "update_subtask");
+  assert.ok(updateSubDef.inputSchema.properties.id);
 });
 
 test("complete_tasks completes active tasks after confirmation", async () => {
@@ -307,4 +316,42 @@ test("uncomplete_tasks skips active tasks and rejects deleted tasks", async () =
   assert.match(text, /active: already active/);
   assert.match(text, /del: task is deleted/);
   assert.match(text, /unknown: task not found/);
+});
+
+test("create_subtask validates parent task, confirms and calls writer", async () => {
+  const { h, calls } = setup([{ id: "t1", name: "Parent Task" }]);
+  const res = await h.create_subtask({ task_id: "t1", name: "Chapter 1", estimated_pomos: 2 });
+  assert.equal(calls.writer.length, 1);
+  assert.equal(calls.writer[0][0], "create_subtask");
+  assert.deepEqual(calls.writer[0][1], { taskId: "t1", name: "Chapter 1", estimatedPomoNum: 2 });
+  assert.match(res, /Created subtask: "Chapter 1"/);
+  assert.equal(calls.invalidated, 1);
+});
+
+test("create_subtask rejects unknown parent task", async () => {
+  const { h } = setup([]);
+  await assert.rejects(h.create_subtask({ task_id: "nonexistent", name: "Chapter 1" }), /Parent task not found: nonexistent/);
+});
+
+test("update_subtask validates, confirms and calls writer with updates", async () => {
+  const { h, calls } = setup([], { subtasks: [{ id: "s1", name: "Old sub", isFinished: false }] });
+  const res = await h.update_subtask({ id: "s1", name: "New sub", is_finished: true, estimated_pomos: 3 });
+  assert.equal(calls.writer.length, 1);
+  assert.equal(calls.writer[0][0], "update_subtask");
+  assert.equal(calls.writer[0][1], "s1");
+  assert.deepEqual(calls.writer[0][2], { name: "New sub", isFinished: true, estimatedPomoNum: 3 });
+  assert.match(res, /Updated subtask: s1/);
+  assert.equal(calls.invalidated, 1);
+});
+
+test("update_subtask returns Nothing to update if no fields changed", async () => {
+  const { h, calls } = setup([], { subtasks: [{ id: "s1", name: "Same" }] });
+  const res = await h.update_subtask({ id: "s1", name: "Same" });
+  assert.equal(calls.writer.length, 0);
+  assert.match(res, /Nothing to update/);
+});
+
+test("update_subtask rejects unknown subtask ID", async () => {
+  const { h } = setup([], { subtasks: [] });
+  await assert.rejects(h.update_subtask({ id: "nonexistent", name: "Test" }), /Subtask not found: nonexistent/);
 });

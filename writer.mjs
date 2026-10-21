@@ -96,5 +96,83 @@ export function createWriter({ openSession }) {
         session.close();
       }
     }),
+    createSubtask: ({ taskId, name, estimatedPomoNum = 0 }) => serialized(async () => {
+      const session = await openSession();
+      try {
+        const result = await session.evaluate(`(async () => {
+          const ts = window.__focusTodoMcp && window.__focusTodoMcp.taskService;
+          const ss = window.__focusTodoMcp && window.__focusTodoMcp.subtaskService;
+          if (!ts) throw new Error("focus-todo-mcp: taskService not located");
+          if (!ss) throw new Error("focus-todo-mcp: subtaskService not located");
+          const parent = await ts.fetchTaskById(${JSON.stringify(taskId)});
+          if (!parent) throw new Error("Parent task not found: " + ${JSON.stringify(taskId)});
+          const subtask = await ss.addSubtask({
+            taskId: ${JSON.stringify(taskId)},
+            name: ${JSON.stringify(name)},
+            estimatedPomoNum: ${Number(estimatedPomoNum) || 0},
+          });
+          if (!parent.hasSubtask) {
+            await ts.updateTaskInfo(${JSON.stringify(taskId)}, { hasSubtask: true });
+          }
+          return subtask == null ? null : JSON.parse(JSON.stringify(subtask));
+        })()`);
+        const id = result?.id;
+        let pendingSync = [taskId], uiRefreshed = false, warning;
+        try {
+          pendingSync = await session.syncAndWait([taskId, ...(id ? [id] : [])]);
+          uiRefreshed = await session.refreshIfIdle();
+        } catch (err) {
+          warning = `Subtask created, but sync/refresh failed: ${err.message}`;
+        }
+        const out = [`Created subtask: "${name}" (${id || "unknown id"})`];
+        if (warning) out.push(warning);
+        if (pendingSync.length) out.push(`Saved locally but not yet confirmed by the sync server: ${pendingSync.join(", ")}.`);
+        if (!uiRefreshed) out.push("The Focus To-Do window was not reloaded (a pomodoro is running or its state is unknown); it shows the subtask on its next refresh.");
+        return out.join("\n");
+      } finally {
+        session.close();
+      }
+    }),
+    updateSubtask: (id, updates) => serialized(async () => {
+      const session = await openSession();
+      try {
+        const result = await session.evaluate(`(async () => {
+          const ss = window.__focusTodoMcp && window.__focusTodoMcp.subtaskService;
+          if (!ss) throw new Error("focus-todo-mcp: subtaskService not located");
+          const existing = await ss.fetchSubtaskById(${JSON.stringify(id)});
+          if (!existing) throw new Error("Subtask not found: " + ${JSON.stringify(id)});
+          const u = ${JSON.stringify(updates)};
+          let res;
+          if (u.isDeleted) {
+            res = await ss.deleteSubtask(${JSON.stringify(id)});
+          } else {
+            const patch = {};
+            if (u.name !== undefined) patch.name = u.name;
+            if (u.isFinished !== undefined) {
+              patch.isFinished = u.isFinished;
+              patch.finishedDate = u.isFinished ? Date.now() : 0;
+            }
+            if (u.estimatedPomoNum !== undefined) patch.estimatedPomoNum = u.estimatedPomoNum;
+            res = await ss.updateSubtaskInfo(${JSON.stringify(id)}, patch);
+          }
+          return res == null ? null : JSON.parse(JSON.stringify(res));
+        })()`);
+        let pendingSync = [id], uiRefreshed = false, warning;
+        try {
+          pendingSync = await session.syncAndWait([id]);
+          uiRefreshed = await session.refreshIfIdle();
+        } catch (err) {
+          warning = `Subtask updated, but sync/refresh failed: ${err.message}`;
+        }
+        const verb = updates.isDeleted ? "Deleted" : updates.isFinished !== undefined ? (updates.isFinished ? "Completed" : "Reopened") : "Updated";
+        const out = [`${verb} subtask: "${result?.name || id}"`];
+        if (warning) out.push(warning);
+        if (pendingSync.length) out.push(`Saved locally but not yet confirmed by the sync server: ${pendingSync.join(", ")}.`);
+        if (!uiRefreshed) out.push("The Focus To-Do window was not reloaded (a pomodoro is running or its state is unknown); it shows the change on its next refresh.");
+        return out.join("\n");
+      } finally {
+        session.close();
+      }
+    }),
   };
 }

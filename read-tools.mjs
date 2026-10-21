@@ -1,6 +1,6 @@
 // Read-only tools: definitions and handlers
-import { isActive, isOverdue, findDuplicateGroups } from "./filters.mjs";
-import { ts, taskSummary } from "./format.mjs";
+import { isActive, isOverdue, findDuplicateGroups, startOfLocalDay, localDayKey } from "./filters.mjs";
+import { ts, projectName, taskSummary, resolveTagNames } from "./format.mjs";
 
 const SYSTEM_PREFIX = ["PRJ_", "id-"];
 const STATUS = ["active", "overdue", "completed", "all"];
@@ -37,7 +37,7 @@ export const READ_TOOL_DEFINITIONS = [
   {
     name: "search_tasks",
     title: "Search tasks",
-    description: "Search tasks by name",
+    description: "Search tasks by name, notes (remark), or tag names",
     annotations: READ_ONLY,
     inputSchema: {
       type: "object",
@@ -82,6 +82,16 @@ export const READ_TOOL_DEFINITIONS = [
     },
   },
   {
+    name: "get_today_focus",
+    title: "Today's focus dashboard",
+    description: "Get today's productivity overview: total focus time, pomodoros completed today (with breakdown by task), tasks due today, and overdue tasks.",
+    annotations: READ_ONLY,
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
     name: "find_duplicate_tasks",
     title: "Find duplicate tasks",
     description: "Find active tasks that are duplicate occurrences of the same recurring series on the same day (optionally also non-recurring tasks with the same name, project and day). Each group lists the copy to keep and the extra copies.",
@@ -108,7 +118,7 @@ export function createReadHandlers({ getData, now = Date.now }) {
     return [...projects.values()]
       .filter(p => include_system || !SYSTEM_PREFIX.some(pre => p.name?.startsWith(pre) || p.id?.startsWith(pre)))
       .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
-      .map(p => ({ id: p.id, name: p.name, state: p.state, color: p.color, isDefault: p.isDefault, type: p.type }));
+      .map(p => ({ id: p.id, name: p.name, state: p.state, color: p.color, isDefault: p.isDefault, type: p.type, isTag: p.type === 3000 }));
   }
 
   function list_tasks({ project_id, status = "active", limit = 100, include_system_projects = false } = {}) {
@@ -136,19 +146,40 @@ export function createReadHandlers({ getData, now = Date.now }) {
   function search_tasks({ query, status = "all", limit = 50 } = {}) {
     const { projects, tasks } = getData();
     const q = query?.toLowerCase() ?? "";
-    const list = filterByStatus([...tasks.values()].filter(t => t.name?.toLowerCase().includes(q)), status);
+    const list = filterByStatus([...tasks.values()].filter(t => {
+      if (t.name?.toLowerCase().includes(q)) return true;
+      if (t.remark?.toLowerCase().includes(q)) return true;
+      const tagNames = resolveTagNames(projects, t.tags);
+      return tagNames.some(name => name.toLowerCase().includes(q));
+    }), status);
     return list.slice(0, limit).map(t => taskSummary(t, projects));
   }
 
   function get_task({ id } = {}) {
-    const { projects, tasks, subtasks } = getData();
+    const { projects, tasks, subtasks, pomodoros } = getData();
     const task = tasks.get(id);
     if (!task) return null;
-    const subs = [...subtasks.values()]
+    const subs = subtasks ? [...subtasks.values()]
       .filter(s => s.taskId === id)
       .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
-      .map(s => ({ id: s.id, name: s.name, isFinished: s.isFinished, state: s.state }));
-    return { ...taskSummary(task, projects), subtasks: subs };
+      .map(s => ({ id: s.id, name: s.name, isFinished: s.isFinished, state: s.state, estimatedPomoNum: s.estimatedPomoNum })) : [];
+    const taskPomos = pomodoros ? [...pomodoros.values()]
+      .filter(p => p.taskId === id && (p.state ?? 0) === 0)
+      .sort((a, b) => (b.endDate ?? 0) - (a.endDate ?? 0)) : [];
+    const totalSeconds = taskPomos.reduce((sum, p) => sum + (p.interval ?? 0), 0);
+    const recentPomos = taskPomos.slice(0, 5).map(p => ({
+      id: p.id,
+      date: ts(p.endDate),
+      minutes: Math.round((p.interval ?? 0) / 60),
+      isManual: p.isManual ?? false,
+    }));
+    return {
+      ...taskSummary(task, projects),
+      total_focus_minutes: Math.round(totalSeconds / 60),
+      pomodoro_count: taskPomos.length,
+      recent_pomodoros: recentPomos,
+      subtasks: subs,
+    };
   }
 
   function list_subtasks({ task_id } = {}) {
@@ -190,5 +221,63 @@ export function createReadHandlers({ getData, now = Date.now }) {
     };
   }
 
-  return { list_projects, list_tasks, search_tasks, get_task, list_subtasks, get_pomodoro_stats, find_duplicate_tasks };
+
+  function get_today_focus() {
+    const { projects, tasks, pomodoros } = getData();
+    const currentTime = now();
+    const todayStart = startOfLocalDay(currentTime);
+    const todayKey = localDayKey(currentTime);
+
+    const todayPomos = pomodoros ? [...pomodoros.values()]
+      .filter(p => (p.state ?? 0) === 0 && p.endDate && p.endDate >= todayStart) : [];
+
+    let totalSeconds = 0;
+    const byTaskMap = new Map();
+
+    for (const p of todayPomos) {
+      totalSeconds += (p.interval ?? 0);
+      const taskId = p.taskId || "no_task";
+      const existing = byTaskMap.get(taskId) || {
+        taskId,
+        taskName: taskId !== "no_task" && tasks.get(taskId) ? tasks.get(taskId).name : "Direct timer",
+        project: taskId !== "no_task" && tasks.get(taskId) ? projectName(projects, tasks.get(taskId).projectId) : "",
+        pomodoros: 0,
+        seconds: 0,
+      };
+      existing.pomodoros++;
+      existing.seconds += (p.interval ?? 0);
+      byTaskMap.set(taskId, existing);
+    }
+
+    const taskBreakdown = [...byTaskMap.values()]
+      .sort((a, b) => b.seconds - a.seconds)
+      .map(t => ({
+        taskId: t.taskId,
+        taskName: t.taskName,
+        project: t.project,
+        pomodoros: t.pomodoros,
+        minutes: Math.round(t.seconds / 60),
+      }));
+
+    const dueToday = [...tasks.values()]
+      .filter(t => isActive(t) && t.deadline && localDayKey(t.deadline) === todayKey)
+      .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+      .map(t => taskSummary(t, projects));
+
+    const overdue = [...tasks.values()]
+      .filter(t => isOverdue(t, currentTime))
+      .sort((a, b) => (a.deadline ?? 0) - (b.deadline ?? 0))
+      .map(t => taskSummary(t, projects));
+
+    return {
+      date: todayKey,
+      total_pomodoros: todayPomos.length,
+      total_focus_minutes: Math.round(totalSeconds / 60),
+      tasks_focused: taskBreakdown,
+      due_today: dueToday,
+      overdue: overdue,
+    };
+  }
+
+  return { list_projects, list_tasks, search_tasks, get_task, list_subtasks, get_pomodoro_stats, get_today_focus, find_duplicate_tasks };
 }

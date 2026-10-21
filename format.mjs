@@ -10,7 +10,14 @@ export function projectName(projects, id) {
   return p ? p.name : id;
 }
 
+export function resolveTagNames(projects, tagIds) {
+  if (!tagIds) return [];
+  const ids = tagIds.split(",").map(s => s.trim()).filter(Boolean);
+  return ids.map(id => projects.get(id)?.name).filter(Boolean);
+}
+
 export function taskSummary(t, projects) {
+  const tagNames = resolveTagNames(projects, t.tags);
   return {
     id: t.id,
     name: t.name,
@@ -26,6 +33,8 @@ export function taskSummary(t, projects) {
     hasSubtask: t.hasSubtask,
     priority: t.priority,
     tags: t.tags,
+    tagNames: tagNames.length > 0 ? tagNames : undefined,
+    remark: t.remark || undefined,
     recurring: (t.rCycle ?? 0) > 0,
     seriesId: t.rId || null,
   };

@@ -134,3 +134,25 @@ test("list_projects marks tags with isTag true", () => {
   assert.equal(res.find(p => p.id === "L1").isTag, false);
   assert.equal(res.find(p => p.id === "T1").isTag, true);
 });
+
+test("get_focus_report groups focus minutes per day, project and category", () => {
+  const projects = new Map([["P1", { id: "P1", name: "EMP Alpha" }], ["P2", { id: "P2", name: "PES Beta" }]]);
+  const tasks = new Map([
+    ["a", { id: "a", name: "A", projectId: "P1" }],
+    ["b", { id: "b", name: "B", projectId: "P2" }],
+  ]);
+  const D = (d, h = 12) => new Date(2026, 9, d, h, 0, 0).getTime();
+  const pomodoros = new Map([
+    ["p1", { id: "p1", taskId: "a", interval: 3600, endDate: D(13), state: 0 }],
+    ["p2", { id: "p2", taskId: "a", interval: 1800, endDate: D(12), state: 0, isManual: true }],
+    ["p3", { id: "p3", taskId: "b", interval: 600, endDate: D(12), state: 0 }],
+    ["p4", { id: "p4", taskId: "a", interval: 999, endDate: D(12), state: 1 }],
+    ["p5", { id: "p5", taskId: "a", interval: 999, endDate: D(1), state: 0 }],
+  ]);
+  const h = createReadHandlers({ getData: () => ({ projects, tasks, subtasks: new Map(), pomodoros }), now: () => NOW });
+  const r = h.get_focus_report({ from: "2026-10-12", to: "2026-10-13" });
+  assert.equal(r.total_minutes, 100);
+  assert.deepEqual(r.by_category, [{ category: "EMP", minutes: 90 }, { category: "PES", minutes: 10 }]);
+  assert.deepEqual(r.daily.map(d => [d.date, d.total_minutes]), [["2026-10-12", 40], ["2026-10-13", 60]]);
+  assert.equal(r.by_project.find(p => p.project === "EMP Alpha").manual_minutes, 30);
+});

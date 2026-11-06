@@ -78,6 +78,7 @@ Environment variables: `FOCUS_TODO_USER_DATA_DIR` (default `~/.config/focustodo-
 | `get_task` | Get full task details including subtasks, total focus time, and recent pomodoros |
 | `list_subtasks` | List subtasks for a task |
 | `get_pomodoro_stats` | Pomodoro statistics by day for the last N days |
+| `get_focus_report` | Focus minutes for a date range, per day, project and category (EMP/CWI/CON/PES), with manual-vs-timer minutes |
 | `get_today_focus` | Daily overview: today's focus time, pomodoros completed (with task breakdown), due today, and overdue |
 | `find_duplicate_tasks` | Find duplicate occurrences of recurring tasks (same series, same day) |
 

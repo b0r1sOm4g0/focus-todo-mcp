@@ -92,6 +92,20 @@ export const READ_TOOL_DEFINITIONS = [
     },
   },
   {
+    name: "get_focus_report",
+    title: "Focus time report by day, project and category",
+    description: "Focus time for a date range, broken down per day and per project, with a category (first word of the project name, e.g. EMP, CWI, CON, PES) and manual-vs-timer minutes. Defaults to the last 7 days including today.",
+    annotations: READ_ONLY,
+    inputSchema: {
+      type: "object",
+      properties: {
+        from: { type: "string", description: "Start date YYYY-MM-DD (local time, inclusive)" },
+        to: { type: "string", description: "End date YYYY-MM-DD (local time, inclusive). Defaults to today" },
+        days: { type: "number", description: "Used when 'from' is omitted: number of days back including today (default 7)", default: 7 },
+      },
+    },
+  },
+  {
     name: "find_duplicate_tasks",
     title: "Find duplicate tasks",
     description: "Find active tasks that are duplicate occurrences of the same recurring series on the same day (optionally also non-recurring tasks with the same name, project and day). Each group lists the copy to keep and the extra copies.",
@@ -212,6 +226,54 @@ export function createReadHandlers({ getData, now = Date.now }) {
     return { days, total_pomodoros: totalPomos, total_minutes: Math.round(totalInterval / 60), daily };
   }
 
+  function get_focus_report({ from, to, days = 7 } = {}) {
+    const { projects, tasks, pomodoros } = getData();
+    const currentTime = now();
+    const toKey = to ?? localDayKey(currentTime);
+    const fromKey = from ?? localDayKey(startOfLocalDay(currentTime) - (days - 1) * 86400_000);
+    const categoryOf = name => (name ?? "").trim().split(/\s+/)[0] || "?";
+
+    const byDay = new Map();
+    const totals = new Map();
+    const bump = (map, key, init, p) => {
+      const e = map.get(key) ?? init();
+      e.pomodoros++;
+      e.seconds += p.interval ?? 0;
+      if (p.isManual) e.manualSeconds += p.interval ?? 0;
+      map.set(key, e);
+    };
+    for (const p of pomodoros?.values() ?? []) {
+      if ((p.state ?? 0) !== 0 || !p.endDate) continue;
+      const day = localDayKey(p.endDate);
+      if (day < fromKey || day > toKey) continue;
+      const task = p.taskId ? tasks.get(p.taskId) : null;
+      const project = task ? projectName(projects, task.projectId) : "Direct timer";
+      const category = task ? categoryOf(project) : "-";
+      const init = () => ({ project, category, pomodoros: 0, seconds: 0, manualSeconds: 0 });
+      if (!byDay.has(day)) byDay.set(day, new Map());
+      bump(byDay.get(day), project, init, p);
+      bump(totals, project, init, p);
+    }
+
+    const fmt = e => ({
+      project: e.project, category: e.category, pomodoros: e.pomodoros,
+      minutes: Math.round(e.seconds / 60), manual_minutes: Math.round(e.manualSeconds / 60),
+    });
+    const sortByMinutes = list => list.sort((a, b) => b.minutes - a.minutes);
+    const sum = list => list.reduce((n, e) => n + e.minutes, 0);
+
+    const dayList = [...byDay.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([date, m]) => {
+      const by_project = sortByMinutes([...m.values()].map(fmt));
+      return { date, total_minutes: sum(by_project), by_project };
+    });
+    const by_project = sortByMinutes([...totals.values()].map(fmt));
+    const catMap = new Map();
+    for (const e of by_project) catMap.set(e.category, (catMap.get(e.category) ?? 0) + e.minutes);
+    const by_category = [...catMap.entries()].map(([category, minutes]) => ({ category, minutes })).sort((a, b) => b.minutes - a.minutes);
+
+    return { from: fromKey, to: toKey, total_minutes: sum(by_project), by_category, by_project, daily: dayList };
+  }
+
   function find_duplicate_tasks({ include_non_recurring = false } = {}) {
     const { projects, tasks } = getData();
     const groups = findDuplicateGroups([...tasks.values()], { includeNonRecurring: include_non_recurring });
@@ -279,5 +341,5 @@ export function createReadHandlers({ getData, now = Date.now }) {
     };
   }
 
-  return { list_projects, list_tasks, search_tasks, get_task, list_subtasks, get_pomodoro_stats, get_today_focus, find_duplicate_tasks };
+  return { list_projects, list_tasks, search_tasks, get_task, list_subtasks, get_pomodoro_stats, get_today_focus, get_focus_report, find_duplicate_tasks };
 }
